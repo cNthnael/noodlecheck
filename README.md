@@ -7,7 +7,7 @@
 A drag-and-drop workflow checker for ComfyUI that draws your graph, names what it is,
 lists every model and custom node it needs, and gives a verdict before you ever hit Run.
 
-[![Live site](https://img.shields.io/badge/live-site-58a6ff?style=for-the-badge)](https://YOUR-USERNAME.github.io/noodlecheck/)
+[![Live site](https://img.shields.io/badge/live-site-58a6ff?style=for-the-badge)](https://cnthnael.github.io/noodlecheck/)
 
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![ComfyUI core](https://img.shields.io/badge/ComfyUI%20core-0.45.0-b39ddb)
@@ -15,7 +15,7 @@ lists every model and custom node it needs, and gives a verdict before you ever 
 ![Build](https://img.shields.io/badge/build%20step-none-lightgrey)
 ![Privacy](https://img.shields.io/badge/uploads-zero-5fd38d)
 
-[**Try it**](https://YOUR-USERNAME.github.io/noodlecheck/) · [Features](#-features) · [Verdicts](#-verdicts) · [Do and don't](#-do-and-dont) · [Run locally](#-run-locally) · [Credits](#-credits)
+[**Open NoodleCheck**](https://cnthnael.github.io/noodlecheck/) · [Features](#-features) · [Verdicts](#-verdicts) · [Node detective](#-custom-node-detective) · [Do and don't](#-do-and-dont) · [Roadmap](#-roadmap) · [Credits](#-credits)
 
 <br>
 
@@ -30,11 +30,11 @@ lists every model and custom node it needs, and gives a verdict before you ever 
 - [Why](#-why)
 - [Features](#-features)
 - [Verdicts](#-verdicts)
+- [Custom node detective](#-custom-node-detective)
 - [How it works](#-how-it-works)
 - [Supported files](#-supported-files)
 - [Do and don't](#-do-and-dont)
-- [Run locally](#-run-locally)
-- [Deploy your own](#-deploy-your-own)
+- [How to use](#-how-to-use)
 - [Project structure](#-project-structure)
 - [Data snapshot](#-data-snapshot)
 - [FAQ](#-faq)
@@ -47,12 +47,13 @@ lists every model and custom node it needs, and gives a verdict before you ever 
 
 ## 🤔 Why
 
-You download a workflow, load it in ComfyUI, and get a wall of red nodes and a list of missing models. NoodleCheck answers the questions you would otherwise find out the hard way:
+You found a workflow you want to try, but you can't open ComfyUI right now:
 
-- What kind of workflow is this?
-- Which models do I need, and where do they go?
-- Which custom node packs do I have to install?
-- Is the file itself broken?
+- 🏢 **You're at work.** No GPU, no ComfyUI, just a browser and five spare minutes.
+- 📱 **You're away from your PC.** The workflow is sitting in a Discord message or a Civitai page on your phone.
+- 💸 **You're about to rent a GPU pod.** The meter starts the second it boots, and you'd rather not spend the first twenty minutes discovering which models and node packs are missing.
+
+NoodleCheck lets you read the workflow anywhere, with nothing installed. Open it in a browser tab and you know **what it does, which models to download, which node packs to install, and whether the file is even healthy**, so by the time you're at your machine or your pod is up, the shopping list is done.
 
 It runs entirely in the browser. **Your workflow file is never uploaded.**
 
@@ -67,6 +68,7 @@ It runs entirely in the browser. **Your workflow file is never uploaded.**
 | 🏷️ | **Workflow identification** | Model family (Krea 2, FLUX.2, Z-Image, Wan 2.2, SDXL...) and task (text-to-image, image-to-video, inpainting...), plus sampler settings. |
 | 📦 | **Model list** | Every model file with its category, target folder, Required or Optional, and a download or search link. |
 | 🔌 | **Custom node list** | Every node pack with the node types it provides, Required or Optional, and its repository link. |
+| 🔍 | **Custom node detective** | Finds the pack behind a node from its metadata, the ComfyUI-Manager catalogue, near-identical names or name prefixes, with a live catalogue update. |
 | 🚦 | **Verdict** | READY, WARNING or ERROR, with each issue linked to the node that caused it. |
 | 🖼️ | **PNG metadata** | Drop an image saved by ComfyUI and the embedded workflow is read straight from it. |
 | 📋 | **Copy report** | One click copies the whole analysis as plain text. |
@@ -95,6 +97,23 @@ NoodleCheck follows the cables **backwards from every output node**.
 |---|---|
 | **Required** | The model or node pack sits on a path to an output. |
 | **Optional** | It is only used by muted or bypassed nodes, by a branch not connected to any output, or by one side of a switch. |
+
+---
+
+## 🔍 Custom node detective
+
+Workflows don't always say where their nodes come from, so NoodleCheck works through four levels of evidence and tells you which one it used:
+
+| Level | Evidence | Shown as |
+|---|---|---|
+| 1 | **Named in the file.** The node's own metadata (`cnr_id`, `aux_id`, saved version) names its pack. | Pack with GitHub and Comfy Registry links |
+| 2 | **Exact catalogue match.** The node type is listed in the ComfyUI-Manager node map. When several packs define the same name, the one that explains the most nodes in the workflow wins. | Pack marked "best match" |
+| 3 | **Near-identical name.** Same name with different capitalisation or punctuation. | Pack with the matched name shown |
+| 4 | **Name-prefix family.** No match at all, but the name shares a prefix with a pack's other nodes (`WanVideo…`, `ADE_…`, `LayerUtility:…`). | "Possible source" candidates under the unknown node |
+
+Anything still unidentified gets one-click GitHub code and repository searches.
+
+**Live catalogue.** The node map ships as a snapshot, but the **Update node catalogue** button at the bottom of the side panel downloads the latest ComfyUI-Manager lists straight from GitHub, so newly published packs are recognised without waiting for a new release of this site.
 
 ---
 
@@ -142,32 +161,21 @@ Everything in that diagram happens in `engine.js` and `index.html`, against a sn
 - ❌ Don't read READY as "this will run on my machine". NoodleCheck reads the file only. It cannot see your installed models, your node packs, your VRAM or your ComfyUI version.
 - ❌ Don't expect it to execute anything. It never runs the workflow, so it cannot catch out-of-memory errors, wrong model and encoder pairings, or bad parameter values.
 - ❌ Don't rely on it for missing inputs on custom nodes. Required-input checks only cover ComfyUI core nodes.
-- ❌ Don't trust a "best match" pack blindly. When a workflow doesn't record which pack a node came from, the most likely one is picked from the catalogue, and several packs can share node names.
+- ❌ Don't trust a "best match" pack blindly. When a workflow doesn't record which pack a node came from, the most likely one is picked from the catalogue, and several packs can share node names. "Possible source" candidates are weaker still: they are educated guesses from the node's name.
 - ❌ Don't assume an "unknown node" is broken. The built-in data is a snapshot, so newer nodes show as unknown.
 - ❌ Don't use screenshots or images sent through chat apps. Those strip the metadata, so no workflow is left inside.
 
 ---
 
-## 💻 Run locally
+## 🖱️ How to use
 
-No install, no build step. Clone and serve the folder:
+Nothing to install, nothing to clone. NoodleCheck is a website.
 
-```bash
-git clone https://github.com/YOUR-USERNAME/noodlecheck.git
-cd noodlecheck
-python -m http.server 8000
-```
+1. Open **<https://cnthnael.github.io/noodlecheck/>** on any device with a browser.
+2. Drop a workflow `.json` or a ComfyUI `.png` on the page, or tap **Open workflow file**.
+3. Read the verdict and the Models and Custom nodes lists on the right.
 
-Then open <http://localhost:8000>.
-
----
-
-## 🚀 Deploy your own
-
-1. Fork this repository.
-2. Go to **Settings → Pages**.
-3. Set **Source** to *Deploy from a branch*, pick `main` and `/ (root)`, and save.
-4. Your copy is live at `https://YOUR-USERNAME.github.io/noodlecheck/` about a minute later.
+That's it. It works the same on a work laptop, a phone or a tablet.
 
 ---
 
@@ -188,7 +196,7 @@ noodlecheck/
 
 ## 🗓️ Data snapshot
 
-NoodleCheck's knowledge is baked into `data.js` and does not update by itself.
+NoodleCheck ships with a snapshot in `data.js`. The node pack catalogue can be refreshed from the page with **Update node catalogue**; the ComfyUI core node list only changes with a new release of this site.
 
 | Source | Snapshot |
 |---|---|
@@ -215,7 +223,7 @@ READY means the file is structurally sound. NoodleCheck cannot see what is insta
 <details>
 <summary><b>A node shows as "unknown". Is the workflow broken?</b></summary>
 <br>
-Not necessarily. It means the node type is not in the ComfyUI core or ComfyUI-Manager snapshot bundled with this version. It may simply be newer than the snapshot date.
+Not necessarily. It means the node type is not in the ComfyUI core or ComfyUI-Manager snapshot bundled with this version. It may simply be newer than the snapshot date. Press **Update node catalogue** at the bottom of the side panel to fetch the latest list, and check the "Possible source" candidates shown under the node.
 </details>
 
 <details>
@@ -234,11 +242,10 @@ The image was re-saved, screenshotted or sent through an app that strips metadat
 
 ## 🛣️ Roadmap
 
-- [ ] Script to regenerate `data.js` from the latest ComfyUI and ComfyUI-Manager
-- [ ] Download the report as a file
-- [ ] Workflows embedded in WebP and video files
-- [ ] Required-input checks for popular custom node packs
+- [ ] Create, edit and save workflows right in the browser
+- [ ] Read workflows embedded in WebP and video files
 - [ ] Side-by-side comparison of two workflows
+- [ ] Send a workflow straight to a locally running ComfyUI
 
 ---
 

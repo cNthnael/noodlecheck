@@ -170,7 +170,7 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
 <script src="samples.js"></script>
 <script src="engine.js"></script>
 <script>
-// app.js v1.0 - 2026-11-11 10:40 WIB : canvas renderer (ComfyUI default dark palette) + side panel
+// app.js v1.1 - 2026-11-11 10:25 WIB : canvas renderer (ComfyUI default dark palette) + side panel
 (function () {
 'use strict';
 var C = window.ComfyCheck, D = C.data;
@@ -552,15 +552,20 @@ function panel() {
     if (a) lk.appendChild(a); if (r) lk.appendChild(r);
     var first = A.inst.filter(function (x) { return x.pack === pk; })[0]; if (first) lk.appendChild(locate(first.graph.id, first.node.key, 'Show a node'));
     li.appendChild(lk);
+    if (pk.fuzzy) li.appendChild(el('p', { class: 'm', text: 'Matched by a near-identical node name: ' + pk.fuzzy.slice(0, 3).join(', ') + '.' }));
     if (pk.guessed) li.appendChild(el('p', { class: 'm', text: 'The file does not name the pack. This is the best match from the ComfyUI-Manager catalogue' + (pk.alt ? '; ' + pk.alt + ' other pack' + (pk.alt > 1 ? 's define' : ' defines') + ' nodes with the same names.' : '.') }));
     up2.appendChild(li);
   });
   A.unknown.forEach(function (t) {
     var first = A.inst.filter(function (x) { return x.unknown && String(x.node.type) === t; })[0];
     var li = el('li', { class: 'item warning' }, el('div', { class: 'cat', text: 'Unidentified node' }), el('div', { class: 'top' }, el('span', { class: 'file', text: t }), el('span', { class: 'lvl warning', text: 'Unknown' })),
-      el('p', { class: 'm', text: 'No pack in the catalogue provides this node type.' }));
-    var lk = el('div', { class: 'links' }), a = safeLink('https://github.com/search?type=code&q=' + encodeURIComponent('"' + t + '" NODE_CLASS_MAPPINGS'), 'Search GitHub code');
-    if (a) lk.appendChild(a); if (first) lk.appendChild(locate(first.graph.id, first.node.key));
+      el('p', { class: 'm', text: 'No pack in the catalogue lists this exact node type.' }));
+    var pos = A.possible && A.possible[t], lk = el('div', { class: 'links' });
+    if (pos) { li.appendChild(el('p', { class: 'd', text: 'Possible source, judged by the "' + pos.prefix + '" name prefix:' }));
+      var pl = el('div', { class: 'links' }); pos.cands.forEach(function (c) { var pa = safeLink(c.url, c.title + ' (' + c.n + ' similar nodes)'); if (pa) pl.appendChild(pa); }); li.appendChild(pl); }
+    var a = safeLink('https://github.com/search?type=code&q=' + encodeURIComponent('"' + t + '" NODE_CLASS_MAPPINGS'), 'Search GitHub code');
+    var a2 = safeLink('https://github.com/search?type=repositories&q=' + encodeURIComponent('comfyui ' + t.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[^A-Za-z0-9]+/g, ' ').trim().split(' ').slice(0, 2).join(' ')), 'Search GitHub repos');
+    if (a) lk.appendChild(a); if (a2) lk.appendChild(a2); if (first) lk.appendChild(locate(first.graph.id, first.node.key));
     li.appendChild(lk); up2.appendChild(li);
   });
   if (up2.children.length) sp.appendChild(up2);
@@ -570,11 +575,22 @@ function panel() {
 function footer(p) {
   p.appendChild(el('section', { class: 'foot' },
     el('p', { text: 'Checked against ComfyUI core ' + D.coreVersion + ' (' + Object.keys(D.core).length.toLocaleString('en-US') + ' node types) and the ComfyUI-Manager catalogue (' + D.packs.length.toLocaleString('en-US') + ' packs, ' + Object.keys(D.models).length + ' model links), snapshot ' + D.built + '. Newer nodes may show as unknown.' }),
-    el('p', { text: 'Your file is read in this browser tab and is not uploaded anywhere.' })));
+    el('p', { text: 'Your file is read in this browser tab and is not uploaded anywhere.' }),
+    el('div', { class: 'links' }, el('button', { class: 'btn small', type: 'button', id: 'btn-cat', text: D.live ? 'Catalogue updated' : 'Update node catalogue (about 5 MB)', on: { click: updateCatalogue } })),
+    el('p', { id: 'cat-msg', style: 'margin-top:6px', text: '' })));
+}
+var RAW = 'https://raw.githubusercontent.com/Comfy-Org/ComfyUI-Manager/main/';
+function updateCatalogue() {
+  var b = $('btn-cat'), msg = $('cat-msg'); if (!b || b.disabled) return; b.disabled = true; b.textContent = 'Downloading\u2026'; msg.textContent = '';
+  Promise.all([fetch(RAW + 'extension-node-map.json').then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
+    fetch(RAW + 'custom-node-list.json').then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })])
+    .then(function (res) { var d = new Date(), stamp = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2) + ' (live)'; C.setCatalogue(res[0], res[1], stamp); if (S.text != null) run(S.text, S.name, S.example); })
+    .catch(function (e) { b.disabled = false; b.textContent = 'Update node catalogue (about 5 MB)'; msg.textContent = 'Could not download the latest catalogue from GitHub (' + (e && e.message || 'blocked') + '). The built-in snapshot is still in use.'; });
 }
 
 // ---------- loading ----------
 function run(text, name, example) {
+  S.text = text;
   S.L = C.load(text); S.A = C.analyze(S.L); S.name = name; S.example = example || null; S.stack = []; S.sel = null; S.marks = new Map(); instIndex = new Map(); mcache.clear();
   (S.A.inst || []).forEach(function (x) { instIndex.set(x.graph.id + '|' + x.node.key, x); });
   S.A.issues.forEach(function (i) { if (!i.nodeKey || i.level === 'note') return; var k = i.graphId + '|' + i.nodeKey; if (S.marks.get(k) !== 'error') S.marks.set(k, i.level); });
@@ -617,7 +633,7 @@ function loadExample(k) { run(window.COMFY_SAMPLES[k], k === 'default' ? 'defaul
 $('examples').onchange = function (e) { loadExample(e.target.value); };
 loadExample('default');
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { mcache.clear(); if (S.graph) { S.graph._laid = false; layoutGraph(S.graph); } draw(); });
-window.__app = { S: S, run: run, focusNode: focusNode, enter: enter };
+window.__app = { S: S, run: run, focusNode: focusNode, enter: enter, updateCatalogue: updateCatalogue };
 })();
 </script>
 </body>

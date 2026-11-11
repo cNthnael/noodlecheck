@@ -1,4 +1,4 @@
-// engine.js v1.0 - 2026-11-11 10:05 WIB
+// engine.js v1.1 - 2026-11-11 10:25 WIB (v1.1: fuzzy + prefix custom node detective, live catalogue update)
 // Workflow parsing + static analysis for the ComfyUI Workflow Checker. No DOM access in this file.
 (function (root) {
   'use strict';
@@ -206,6 +206,49 @@
     return { links: links, exact: false };
   }
 
+  // ---------- custom node detective ----------
+  var normIndex = null;
+  function normName(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  function buildIndex() { normIndex = {}; for (var k in D.nodeMap) { var n = normName(k); if (n && !normIndex[n]) normIndex[n] = k; } }
+  var STOP = { image: 1, images: 1, load: 1, save: 1, mask: 1, latent: 1, text: 1, string: 1, clip: 1, model: 1, video: 1, audio: 1, conditioning: 1,
+    ksampler: 1, sampler: 1, empty: 1, preview: 1, apply: 1, lora: 1, vae: 1, controlnet: 1, control: 1, float: 1, math: 1, simple: 1, batch: 1,
+    crop: 1, color: 1, upscale: 1, comfy: 1, comfyui: 1, node: 1, show: 1, create: 1, convert: 1, prompt: 1, loader: 1, custom: 1, basic: 1, advanced: 1 };
+  function prefixes(t) {
+    var words = String(t).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean), out = [];
+    for (var n = Math.min(3, words.length - 1); n >= 1; n--) { var p = words.slice(0, n).join('').toLowerCase(); if (p.length >= 3 && !(n === 1 && STOP[p])) out.push(p); }
+    return out;
+  }
+  // exact name with different case/punctuation, else packs whose nodes share the same name prefix
+  function detect(t) {
+    if (!normIndex) buildIndex();
+    var hit = normIndex[normName(t)];
+    if (hit && D.nodeMap[hit]) return { exactish: hit, packs: D.nodeMap[hit] };
+    var ps = prefixes(t), keys = Object.keys(D.nodeMap);
+    for (var i = 0; i < ps.length; i++) {
+      var p = ps[i], count = {}, total = 0;
+      keys.forEach(function (k) { if (normName(k).indexOf(p) === 0) { total++; D.nodeMap[k].forEach(function (ix) { count[ix] = (count[ix] || 0) + 1; }); } });
+      var top = Math.max.apply(null, Object.keys(count).map(function (k) { return count[k]; }));
+      var ranked = Object.keys(count).map(Number).sort(function (a, b) { return Math.abs(count[b] - count[a]) > top * 0.1 ? count[b] - count[a] : a - b; });
+      if (ranked.length && count[ranked[0]] >= 3 && count[ranked[0]] / total >= 0.4)
+        return { prefix: p, cands: ranked.slice(0, 3).filter(function (ix) { return count[ix] >= 3; }).map(function (ix) { return { title: D.packs[ix][1] || D.packs[ix][0].split('/').pop(), url: D.packs[ix][0], n: count[ix] }; }) };
+    }
+    return null;
+  }
+  // rebuild the pack catalogue from freshly downloaded ComfyUI-Manager files
+  function setCatalogue(extMap, nodeList, stamp) {
+    var meta = {}, packs = [], nm = {};
+    (nodeList.custom_nodes || []).forEach(function (c, i) { (c.files || []).concat([c.reference || '']).forEach(function (f) { f = String(f).replace(/\/$/, ''); if (!(f in meta)) meta[f] = [i, c]; }); });
+    Object.keys(extMap).forEach(function (url) {
+      var m = meta[url.replace(/\/$/, '')]; if (!m) return;
+      var idx = packs.length; packs.push([m[1].reference || url, m[1].title || '', m[1].id || '', m[0]]);
+      (extMap[url][0] || []).forEach(function (n) { if (!D.core[n]) (nm[n] = nm[n] || []).push(idx); });
+    });
+    Object.keys(nm).forEach(function (n) { nm[n] = nm[n].filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return packs[a][3] - packs[b][3]; }).slice(0, 6); });
+    if (packs.length < 1000) throw new Error('catalogue looks incomplete');
+    D.packs = packs.map(function (p) { return p.slice(0, 3); }); D.nodeMap = nm; D.built = stamp; D.live = true; normIndex = null;
+    return { packs: packs.length, names: Object.keys(nm).length };
+  }
+
   // ---------- analysis ----------
   var RANK = { req: 3, cond: 2, unused: 1, off: 0 };
   function analyze(L) {
@@ -353,19 +396,24 @@
       unresolved.get(t).push(x);
     });
     // resolve remaining types through the ComfyUI-Manager node map (pick the pack that explains most of them)
-    var votes = {};
+    var votes = {}, possible = {};
     unresolved.forEach(function (list, t) { (D.nodeMap[t] || D.nodeMap[t.trim()] || []).forEach(function (i) { votes[i] = (votes[i] || 0) + 1; }); });
     packs.forEach(function (p) { for (var i = 0; i < D.packs.length; i++) if (D.packs[i][0] === p.url) votes[i] = (votes[i] || 0) + 100; });
     unresolved.forEach(function (list, t) {
-      var c = D.nodeMap[t] || D.nodeMap[t.trim()];
+      var c = D.nodeMap[t] || D.nodeMap[t.trim()], fuzzy = null;
       if (!c || !c.length) {
-        unknownTypes.set(t, list);
-        list.forEach(function (x) { x.unknown = true; });
-        return;
+        var det = detect(t);
+        if (det && det.exactish) { c = det.packs; fuzzy = det.exactish; }
+        else {
+          unknownTypes.set(t, list);
+          if (det) possible[t] = det;
+          list.forEach(function (x) { x.unknown = true; });
+          return;
+        }
       }
       var bestI = c[0]; c.forEach(function (i) { if ((votes[i] || 0) > (votes[bestI] || 0)) bestI = i; });
       var p = D.packs[bestI], pk = packFor(p[0].toLowerCase(), p[1] || p[0].split('/').pop(), p[0], null);
-      pk.guessed = true; pk.alt = Math.max(pk.alt, c.length - 1);
+      pk.guessed = true; pk.alt = Math.max(pk.alt, c.length - 1); if (fuzzy) pk.fuzzy = (pk.fuzzy || []).concat([t + ' \u2248 ' + fuzzy]);
       list.forEach(function (x) { pk.types.set(t, (pk.types.get(t) || 0) + 1); if (RANK[x.need] > RANK[pk.need]) pk.need = x.need; x.pack = pk; });
     });
     var packList = Array.from(packs.values()).sort(function (a, b) { return RANK[b.need] - RANK[a.need] || a.title.localeCompare(b.title); });
@@ -375,7 +423,7 @@
       var act = list.filter(function (x) { return x.need === 'req' || x.need === 'cond'; });
       var x = act[0] || list[0];
       if (x.need === 'off') return;
-      issue(act.length ? 'warning' : 'note', 'Unknown node type "' + t + '"', 'Not in ComfyUI core ' + D.coreVersion + ' or the ComfyUI-Manager catalogue (snapshot ' + D.built + '). ' + (act.length ? 'The workflow cannot run until you find and install the pack that provides it.' : 'It is not connected to an output, so it does not block the run.'), x.node, x.graph);
+      issue(act.length ? 'warning' : 'note', 'Unknown node type "' + t + '"', 'Not in ComfyUI core ' + D.coreVersion + ' or the ComfyUI-Manager catalogue (snapshot ' + D.built + '). ' + (act.length ? (possible[t] ? 'Likely from ' + possible[t].cands.map(function (c) { return c.title; }).join(' or ') + ' (their nodes share the "' + possible[t].prefix + '" name prefix). ' : '') + 'The workflow cannot run until you find and install the pack that provides it.' : 'It is not connected to an output, so it does not block the run.'), x.node, x.graph);
     });
 
     // --- models ---
@@ -447,7 +495,7 @@
     issues.sort(function (a, b) { return order[a.level] - order[b.level]; });
     var nE = issues.filter(function (i) { return i.level === 'error'; }).length, nW = issues.filter(function (i) { return i.level === 'warning'; }).length;
     return { status: nE ? 'error' : nW ? 'warning' : 'ready', issues: issues, models: modelList, packs: packList, kind: kind, inst: inst,
-      counts: { error: nE, warning: nW, note: issues.length - nE - nW }, needOf: needOf, unknown: Array.from(unknownTypes.keys()) };
+      counts: { error: nE, warning: nW, note: issues.length - nE - nW }, needOf: needOf, unknown: Array.from(unknownTypes.keys()), possible: possible };
   }
 
   // ---------- what kind of workflow is it ----------
@@ -568,5 +616,5 @@
   }
 
   root.ComfyCheck = { load: load, analyze: analyze, widgetRows: widgetRows, pngWorkflow: pngWorkflow, isPng: isPng, report: report, needLabel: needLabel,
-    needWhy: needWhy, isOutputType: isOutputType, FRONTEND: FRONTEND, data: D };
+    needWhy: needWhy, isOutputType: isOutputType, setCatalogue: setCatalogue, detect: detect, FRONTEND: FRONTEND, data: D };
 })(typeof window !== 'undefined' ? window : globalThis);
