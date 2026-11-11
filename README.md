@@ -64,7 +64,7 @@ It runs entirely in the browser. **Your workflow file is never uploaded.**
 | | Feature | What you get |
 |---|---|---|
 | 🎨 | **ComfyUI-style graph** | Nodes, cables, groups, muted and bypassed nodes drawn with ComfyUI's default dark palette and node sizes. Pan, zoom, click a node for details. |
-| 🧩 | **Subgraph support** | Double-click a subgraph node to open it, with a breadcrumb to go back. |
+| 🧩 | **Subgraph navigation** | Open a subgraph the way the ComfyUI frontend does: click the enter button on the node's title bar or double-click it. A breadcrumb trail and `Esc` take you back, nested subgraphs included, and the parent view is restored where you left it. |
 | 🏷️ | **Workflow identification** | Model family (Krea 2, FLUX.2, Z-Image, Wan 2.2, SDXL...) and task (text-to-image, image-to-video, inpainting...), plus sampler settings. |
 | 📦 | **Model list** | Every model file with its category, target folder, Required or Optional, and a download or search link. |
 | 🔌 | **Custom node list** | Every node pack with the node types it provides, Required or Optional, and its repository link. |

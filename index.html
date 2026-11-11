@@ -170,7 +170,7 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
 <script src="samples.js"></script>
 <script src="engine.js"></script>
 <script>
-// app.js v1.1 - 2026-11-11 10:25 WIB : canvas renderer (ComfyUI default dark palette) + side panel
+// app.js v1.2 - 2026-11-11 10:45 WIB (v1.2: enter-subgraph button on nodes, Esc to go back, view restored on return) : canvas renderer (ComfyUI default dark palette) + side panel
 (function () {
 'use strict';
 var C = window.ComfyCheck, D = C.data;
@@ -366,7 +366,15 @@ function draw() {
     ctx.fillStyle = color; ctx.fillRect(L.x, top, fullW, LG.TITLE_H);
     if (n.mode === 4) { ctx.globalAlpha = 0.2; ctx.fillStyle = LG.BYPASS; ctx.fillRect(L.x, top, fullW, fullH); ctx.globalAlpha = 1; }
     ctx.fillStyle = LG.BOX; ctx.beginPath(); ctx.arc(L.x + 15, top + 15, 5, 0, 6.3); ctx.fill();
-    if (lod) { ctx.font = '14px ' + F; ctx.fillStyle = selected ? '#FFF' : LG.TITLE; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(clipText(L.label, fullW - 40, '14px ' + F), L.x + 30, top + 15.5); }
+    var isSubNode = S.L.subs.has(n.type);
+    if (lod) { ctx.font = '14px ' + F; ctx.fillStyle = selected ? '#FFF' : LG.TITLE; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(clipText(L.label, fullW - (isSubNode ? 66 : 40), '14px ' + F), L.x + 30, top + 15.5); }
+    if (isSubNode && fullW > 70) { // enter-subgraph button, top right of the title bar like the ComfyUI frontend
+      var bx = L.x + fullW - 28, by = top + 5;
+      rr(bx, by, 22, 20, 5); ctx.fillStyle = S.hoverSub === n.key ? '#5a5a5a' : '#444'; ctx.fill();
+      ctx.strokeStyle = '#DDD'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(bx + 10, by + 6); ctx.lineTo(bx + 6, by + 6); ctx.lineTo(bx + 6, by + 14); ctx.lineTo(bx + 14, by + 14); ctx.lineTo(bx + 14, by + 11); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(bx + 10, by + 10); ctx.lineTo(bx + 16, by + 4); ctx.moveTo(bx + 12, by + 4); ctx.lineTo(bx + 16, by + 4); ctx.lineTo(bx + 16, by + 8); ctx.stroke();
+    }
     if (!L.collapsed) {
       var isNote = n.type === 'Note' || n.type === 'MarkdownNote';
       // sockets
@@ -435,7 +443,10 @@ cv.addEventListener('pointermove', function (e) {
   if (ptrs.size === 1) { S.ox += dx; S.oy += dy; if (moved > 4) S.auto = false; draw(); }
   else if (ptrs.size === 2) { var a = Array.from(ptrs.values()), d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y); if (pinch > 0 && d > 0) zoomAt((a[0].x + a[1].x) / 2, (a[0].y + a[1].y) / 2, d / pinch); pinch = d; }
 });
-function up(e) { if (!ptrs.has(e.pointerId)) return; var wasOne = ptrs.size === 1; ptrs.delete(e.pointerId); if (!ptrs.size) cv.classList.remove('drag'); if (wasOne && moved < 5 && e.type === 'pointerup') { var n = hit(e.offsetX, e.offsetY); select(n ? { graphId: S.graph.id, key: n.key } : null); } }
+function up(e) { if (!ptrs.has(e.pointerId)) return; var wasOne = ptrs.size === 1; ptrs.delete(e.pointerId); if (!ptrs.size) cv.classList.remove('drag'); if (wasOne && moved < 5 && e.type === 'pointerup') { var n = hit(e.offsetX, e.offsetY); if (n && onSubButton(n, e.offsetX, e.offsetY)) { enter(n.type); return; } select(n ? { graphId: S.graph.id, key: n.key } : null); } }
+function onSubButton(n, px, py) { if (!S.L.subs.has(n.type)) return false; var L = n._L, w = L.collapsed ? L.cw : L.w, p = toWorld(px, py); return w > 70 && p.x >= L.x + w - 32 && p.x <= L.x + w - 2 && p.y >= L.y - LG.TITLE_H && p.y <= L.y; }
+cv.addEventListener('pointermove', function (e) { if (ptrs.size || !S.graph) return; var n = hit(e.offsetX, e.offsetY), h = n && onSubButton(n, e.offsetX, e.offsetY) ? n.key : null; cv.style.cursor = h ? 'pointer' : ''; if (h !== S.hoverSub) { S.hoverSub = h; draw(); } });
+window.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.stack.length && !document.querySelector('dialog[open]')) { if (S.sel) select(null); else back(S.stack.length - 1); } });
 cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
 cv.addEventListener('wheel', function (e) { e.preventDefault(); zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015))); }, { passive: false });
 cv.addEventListener('dblclick', function (e) { var n = hit(e.offsetX, e.offsetY); if (n && S.L.subs.has(n.type)) enter(n.type); });
@@ -444,9 +455,10 @@ $('z-out').onclick = function () { zoomAt(stage.clientWidth / 2, stage.clientHei
 $('z-fit').onclick = fit;
 new ResizeObserver(function () { if (S.auto && S.graph) fit(); else draw(); }).observe(stage);
 
-function showGraph(G, keepView) { S.graph = G; layoutGraph(G); crumbs(); legend(); if (!keepView) fit(); else draw(); }
-function enter(subId) { var G = S.L.subs.get(subId); if (!G) return; S.stack.push(S.graph); select(null); showGraph(G); }
-function back(toIndex) { var G = S.stack[toIndex]; S.stack = S.stack.slice(0, toIndex); select(null); showGraph(G); }
+function showGraph(G, keepView) { S.graph = G; S.hoverSub = null; layoutGraph(G); crumbs(); legend(); if (keepView && G._view) { S.scale = G._view.scale; S.ox = G._view.ox; S.oy = G._view.oy; S.auto = G._view.auto; draw(); } else fit(); }
+function saveView() { if (S.graph) S.graph._view = { scale: S.scale, ox: S.ox, oy: S.oy, auto: S.auto }; }
+function enter(subId) { var G = S.L.subs.get(subId); if (!G || G === S.graph || S.stack.indexOf(G) >= 0) return; saveView(); S.stack.push(S.graph); select(null); showGraph(G); }
+function back(toIndex) { var G = S.stack[toIndex]; S.stack = S.stack.slice(0, toIndex); select(null); showGraph(G, true); }
 function focusNode(graphId, key) {
   var G = graphId === 'root' ? S.L.root : S.L.subs.get(graphId); if (!G) return;
   if (S.graph !== G) { if (G === S.L.root) S.stack = []; else if (S.stack.indexOf(G) >= 0) S.stack = S.stack.slice(0, S.stack.indexOf(G)); else S.stack.push(S.graph); S.graph = G; layoutGraph(G); crumbs(); legend(); }
@@ -465,6 +477,7 @@ function crumbs() {
     var p = el('span', { class: 'pill' });
     S.stack.forEach(function (g, i) { p.appendChild(el('button', { type: 'button', text: g.name, on: { click: function () { back(i); } } })); p.appendChild(document.createTextNode('  ›  ')); });
     p.appendChild(document.createTextNode(S.graph.name)); c.appendChild(p);
+    c.appendChild(el('span', { class: 'pill', text: 'Inside a subgraph. Press Esc or use the trail to go back.' }));
   }
 }
 function legend() {
