@@ -550,7 +550,7 @@
   }
 
   function report(L, A, fileName) {
-    var out = ['ComfyUI Workflow Checker report', 'File: ' + (fileName || 'workflow'), 'Status: ' + A.status.toUpperCase() + (A.counts ? ' (' + A.counts.error + ' errors, ' + A.counts.warning + ' warnings, ' + A.counts.note + ' notes)' : '')];
+    var out = ['NoodleCheck report', 'File: ' + (fileName || 'workflow'), 'Status: ' + A.status.toUpperCase() + (A.counts ? ' (' + A.counts.error + ' errors, ' + A.counts.warning + ' warnings, ' + A.counts.note + ' notes)' : '')];
     if (A.kind) { out.push('Type: ' + A.kind.headline + (A.kind.chips.length ? ' [' + A.kind.chips.join(', ') + ']' : '')); if (A.kind.settings) out.push('Sampler: ' + A.kind.settings); out.push(A.kind.description); }
     out.push('', 'Issues:'); if (!A.issues.length) out.push('  none');
     A.issues.forEach(function (i) { out.push('  [' + i.level.toUpperCase() + '] ' + i.title + (i.detail ? ' - ' + i.detail : '')); });

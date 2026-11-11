@@ -1,1 +1,274 @@
-# noodlecheck
+<div align="center">
+
+# 🍜 NoodleCheck
+
+**Drop a ComfyUI workflow. See the noodles. Know if it runs.**
+
+A drag-and-drop workflow checker for ComfyUI that draws your graph, names what it is,
+lists every model and custom node it needs, and gives a verdict before you ever hit Run.
+
+[![Live site](https://img.shields.io/badge/live-site-58a6ff?style=for-the-badge)](https://YOUR-USERNAME.github.io/noodlecheck/)
+
+![License](https://img.shields.io/badge/license-GPL--3.0-blue)
+![ComfyUI core](https://img.shields.io/badge/ComfyUI%20core-0.45.0-b39ddb)
+![Node packs](https://img.shields.io/badge/node%20packs-5%2C720-6ee7b7)
+![Build](https://img.shields.io/badge/build%20step-none-lightgrey)
+![Privacy](https://img.shields.io/badge/uploads-zero-5fd38d)
+
+[**Try it**](https://YOUR-USERNAME.github.io/noodlecheck/) · [Features](#-features) · [Verdicts](#-verdicts) · [Do and don't](#-do-and-dont) · [Run locally](#-run-locally) · [Credits](#-credits)
+
+<br>
+
+<img src="docs/krea2.png" alt="NoodleCheck showing the official Krea 2 Turbo template with a READY verdict" width="900">
+
+</div>
+
+---
+
+## 📖 Table of contents
+
+- [Why](#-why)
+- [Features](#-features)
+- [Verdicts](#-verdicts)
+- [How it works](#-how-it-works)
+- [Supported files](#-supported-files)
+- [Do and don't](#-do-and-dont)
+- [Run locally](#-run-locally)
+- [Deploy your own](#-deploy-your-own)
+- [Project structure](#-project-structure)
+- [Data snapshot](#-data-snapshot)
+- [FAQ](#-faq)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [Credits](#-credits)
+- [License](#-license)
+
+---
+
+## 🤔 Why
+
+You download a workflow, load it in ComfyUI, and get a wall of red nodes and a list of missing models. NoodleCheck answers the questions you would otherwise find out the hard way:
+
+- What kind of workflow is this?
+- Which models do I need, and where do they go?
+- Which custom node packs do I have to install?
+- Is the file itself broken?
+
+It runs entirely in the browser. **Your workflow file is never uploaded.**
+
+---
+
+## ✨ Features
+
+| | Feature | What you get |
+|---|---|---|
+| 🎨 | **ComfyUI-style graph** | Nodes, cables, groups, muted and bypassed nodes drawn with ComfyUI's default dark palette and node sizes. Pan, zoom, click a node for details. |
+| 🧩 | **Subgraph support** | Double-click a subgraph node to open it, with a breadcrumb to go back. |
+| 🏷️ | **Workflow identification** | Model family (Krea 2, FLUX.2, Z-Image, Wan 2.2, SDXL...) and task (text-to-image, image-to-video, inpainting...), plus sampler settings. |
+| 📦 | **Model list** | Every model file with its category, target folder, Required or Optional, and a download or search link. |
+| 🔌 | **Custom node list** | Every node pack with the node types it provides, Required or Optional, and its repository link. |
+| 🚦 | **Verdict** | READY, WARNING or ERROR, with each issue linked to the node that caused it. |
+| 🖼️ | **PNG metadata** | Drop an image saved by ComfyUI and the embedded workflow is read straight from it. |
+| 📋 | **Copy report** | One click copies the whole analysis as plain text. |
+| 🔒 | **Private by design** | No server, no account, no upload. Parsing happens in your tab. |
+
+---
+
+## 🚦 Verdicts
+
+| Level | Meaning | Typical causes |
+|---|---|---|
+| 🟢 **READY** | Nothing wrong was found in the file. | — |
+| 🟠 **WARNING** | It can run, but something needs attention first. | Custom node packs to install · unknown node types · broken cables · mismatched cable types |
+| 🔴 **ERROR** | It cannot run as it is. | Corrupted JSON · required input with no cable · cables forming a loop · duplicate node ids · no output node |
+
+<div align="center">
+<img src="docs/error.png" alt="NoodleCheck flagging a broken workflow with an ERROR verdict and red outlines on the failing nodes" width="900">
+<br><sub>A deliberately broken workflow: failing nodes are outlined, and each issue jumps to its node.</sub>
+</div>
+
+### Required vs Optional
+
+NoodleCheck follows the cables **backwards from every output node**.
+
+| Status | When |
+|---|---|
+| **Required** | The model or node pack sits on a path to an output. |
+| **Optional** | It is only used by muted or bypassed nodes, by a branch not connected to any output, or by one side of a switch. |
+
+---
+
+## ⚙️ How it works
+
+```mermaid
+flowchart LR
+    A[".json / .png<br>dropped on the page"] --> B["Read<br>parse JSON or PNG metadata"]
+    B --> C["Normalise<br>nodes, cables, subgraphs"]
+    C --> D["Trace<br>walk back from outputs"]
+    D --> E["Check<br>inputs, cables, loops"]
+    D --> F["Resolve<br>models and node packs"]
+    E --> G["Verdict<br>READY / WARNING / ERROR"]
+    F --> G
+    C --> H["Draw<br>ComfyUI-style canvas"]
+```
+
+Everything in that diagram happens in `engine.js` and `index.html`, against a snapshot of ComfyUI data stored in `data.js`.
+
+---
+
+## 📂 Supported files
+
+| Input | Notes |
+|---|---|
+| Workflow `.json` | The normal export from ComfyUI, including workflows with subgraphs |
+| API-format `.json` | Laid out automatically, because that format stores no positions |
+| ComfyUI `.png` | Reads the workflow embedded in the image metadata |
+| Pasted JSON | `Ctrl+V` anywhere on the page, or the Paste JSON button |
+
+---
+
+## ✅ Do and don't
+
+### Do
+
+- ✅ Check a downloaded workflow **before** loading it, to see what to install first.
+- ✅ Use the model and node lists as a shopping list against your own `models/` and `custom_nodes/` folders.
+- ✅ Click **Show node** on an issue to jump straight to the problem.
+- ✅ Use the **original** `.png` from your ComfyUI output folder when loading from an image.
+- ✅ Confirm the file name and source before downloading anything from a search link.
+
+### Don't
+
+- ❌ Don't read READY as "this will run on my machine". NoodleCheck reads the file only. It cannot see your installed models, your node packs, your VRAM or your ComfyUI version.
+- ❌ Don't expect it to execute anything. It never runs the workflow, so it cannot catch out-of-memory errors, wrong model and encoder pairings, or bad parameter values.
+- ❌ Don't rely on it for missing inputs on custom nodes. Required-input checks only cover ComfyUI core nodes.
+- ❌ Don't trust a "best match" pack blindly. When a workflow doesn't record which pack a node came from, the most likely one is picked from the catalogue, and several packs can share node names.
+- ❌ Don't assume an "unknown node" is broken. The built-in data is a snapshot, so newer nodes show as unknown.
+- ❌ Don't use screenshots or images sent through chat apps. Those strip the metadata, so no workflow is left inside.
+
+---
+
+## 💻 Run locally
+
+No install, no build step. Clone and serve the folder:
+
+```bash
+git clone https://github.com/YOUR-USERNAME/noodlecheck.git
+cd noodlecheck
+python -m http.server 8000
+```
+
+Then open <http://localhost:8000>.
+
+---
+
+## 🚀 Deploy your own
+
+1. Fork this repository.
+2. Go to **Settings → Pages**.
+3. Set **Source** to *Deploy from a branch*, pick `main` and `/ (root)`, and save.
+4. Your copy is live at `https://YOUR-USERNAME.github.io/noodlecheck/` about a minute later.
+
+---
+
+## 🗂️ Project structure
+
+```text
+noodlecheck/
+├── index.html     # Page layout, styles, canvas renderer and side panel
+├── engine.js      # Reads the workflow and runs every check
+├── data.js        # Snapshot: core node definitions, node pack map, model links
+├── samples.js     # The three built-in example workflows
+├── favicon.svg    # Browser tab icon
+├── docs/          # Screenshots used in this README
+└── README.md
+```
+
+---
+
+## 🗓️ Data snapshot
+
+NoodleCheck's knowledge is baked into `data.js` and does not update by itself.
+
+| Source | Snapshot |
+|---|---|
+| ComfyUI core | **0.45.0** · 1,020 node types |
+| ComfyUI-Manager catalogue | 5,720 node packs · 857 model links |
+| Snapshot date | **2026-11-11** |
+
+---
+
+## ❓ FAQ
+
+<details>
+<summary><b>Is my workflow uploaded anywhere?</b></summary>
+<br>
+No. The file is parsed inside your browser tab. The only outside request the page makes is loading its typefaces from Google Fonts.
+</details>
+
+<details>
+<summary><b>It says READY but ComfyUI still shows errors. Why?</b></summary>
+<br>
+READY means the file is structurally sound. NoodleCheck cannot see what is installed on your machine, so missing model files or node packs on your side still stop the run. Use the Models and Custom nodes lists to check what you need.
+</details>
+
+<details>
+<summary><b>A node shows as "unknown". Is the workflow broken?</b></summary>
+<br>
+Not necessarily. It means the node type is not in the ComfyUI core or ComfyUI-Manager snapshot bundled with this version. It may simply be newer than the snapshot date.
+</details>
+
+<details>
+<summary><b>Why is a model link a search instead of a download?</b></summary>
+<br>
+A direct link is shown when the workflow itself or the catalogue records where the file comes from. For anything else, such as a personal LoRA, the link is a search by file name on Hugging Face or Civitai.
+</details>
+
+<details>
+<summary><b>My PNG says "No workflow inside this PNG".</b></summary>
+<br>
+The image was re-saved, screenshotted or sent through an app that strips metadata. Use the original file from your ComfyUI output folder.
+</details>
+
+---
+
+## 🛣️ Roadmap
+
+- [ ] Script to regenerate `data.js` from the latest ComfyUI and ComfyUI-Manager
+- [ ] Download the report as a file
+- [ ] Workflows embedded in WebP and video files
+- [ ] Required-input checks for popular custom node packs
+- [ ] Side-by-side comparison of two workflows
+
+---
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome. The most useful reports include the workflow file (or a trimmed copy) and what NoodleCheck got wrong: a false error, a wrong model category, or a node matched to the wrong pack.
+
+---
+
+## 🙏 Credits
+
+NoodleCheck is an independent community tool. It is **not affiliated with or endorsed by Comfy Org**.
+
+| Project | Used for | License |
+|---|---|---|
+| [ComfyUI](https://github.com/comfyanonymous/ComfyUI) by comfyanonymous and contributors | Core node definitions, model folder names, default example workflow | GPL-3.0 |
+| [ComfyUI_frontend](https://github.com/Comfy-Org/ComfyUI_frontend) by Comfy Org | Default dark palette, cable colours, node dimensions | GPL-3.0 |
+| [ComfyUI-Manager](https://github.com/Comfy-Org/ComfyUI-Manager) by Dr.Lt.Data and contributors | Node-to-pack map, node pack catalogue, model list | GPL-3.0 |
+| [workflow_templates](https://github.com/Comfy-Org/workflow_templates) by Comfy Org | Krea 2 Turbo example, model download links, test set | See repository |
+| [Inter](https://rsms.me/inter/), [IBM Plex](https://github.com/IBM/plex) | Typefaces, served by Google Fonts | SIL OFL 1.1 |
+
+Built with the help of [Claude](https://claude.ai) by Anthropic.
+
+---
+
+## 📄 License
+
+Released under the **GNU General Public License v3.0**, because `data.js` and `samples.js` contain material derived from GPL-3.0 projects. See [`LICENSE`](LICENSE).
+
+<div align="center">
+<br>
+<sub>Made for people who would rather check the noodles than chase red nodes.</sub>
+</div>
