@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ComfyUI Workflow Checker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: ComfyUI's own dark workspace. Graph canvas fills the left, a fixed inspector column on the right;
+   on narrow screens the column drops under the canvas. Single dark theme on purpose: it mirrors the ComfyUI default palette. */
+:root{
+  color-scheme:dark;
+  --canvas:#141414; --bg:#202020; --menu:#171718; --raised:#2a2a2b; --line:#3a3a3c; --line-strong:#4e4e4e;
+  --fg:#ffffff; --text:#dddddd; --muted:#999999;
+  --accent:#58a6ff;
+  --ok:#5fd38d; --warn:#ffa931; --err:#ff5c5c; --note:#8fb3d9;
+  --font-ui:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --font-graph:Inter,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:14px/1.45 var(--font-ui);display:flex;flex-direction:column;overflow:hidden}
+button,select,textarea{font:inherit;color:inherit}
+a{color:var(--accent);text-underline-offset:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--font-mono)}
+
+header{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:8px 16px;background:var(--menu);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:baseline;gap:8px;margin-right:auto;white-space:nowrap}
+.brand b{color:var(--fg);font-size:15px;font-weight:600}
+.brand span{color:var(--muted);font-size:12px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{background:var(--raised);border:1px solid var(--line-strong);border-radius:6px;padding:6px 12px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:#353537;border-color:#666}
+.btn.primary{background:#1f6feb;border-color:#1f6feb;color:#fff;font-weight:500}
+.btn.primary:hover{background:#3880f0}
+.btn.small{padding:3px 8px;font-size:12px}
+select.btn{padding-right:8px}
+label.sel{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
+
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 400px}
+#stage{position:relative;background:var(--canvas);min-height:0;overflow:hidden;touch-action:none}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
+#cv.drag{cursor:grabbing}
+.overlay{position:absolute;pointer-events:none}
+.overlay>*{pointer-events:auto}
+#crumbs{top:12px;left:12px;right:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pill{background:rgba(23,23,24,.92);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;color:var(--text)}
+.pill button{background:none;border:0;color:var(--accent);cursor:pointer;padding:0;text-decoration:underline}
+#zoom{right:12px;bottom:12px;display:flex;gap:6px}
+#zoom .btn{min-width:36px;background:rgba(23,23,24,.92)}
+#legend{left:12px;bottom:12px;display:flex;flex-wrap:wrap;gap:4px 10px;max-width:calc(100% - 190px);background:rgba(23,23,24,.92);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:11px;color:var(--muted)}
+#legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+#inspector{left:12px;bottom:12px;width:min(340px,calc(100% - 24px));max-height:55%;overflow:auto;background:rgba(23,23,24,.96);border:1px solid var(--line-strong);border-radius:8px;padding:12px;display:none}
+#inspector h3{margin:0 0 2px;font-size:14px;color:var(--fg);overflow-wrap:anywhere}
+#inspector .close{float:right;margin:-4px -4px 0 8px}
+.kv{display:grid;grid-template-columns:minmax(70px,38%) 1fr;gap:2px 10px;font-size:12px;margin-top:8px}
+.kv dt{color:var(--muted);overflow-wrap:anywhere}
+.kv dd{margin:0;font-family:var(--font-mono);overflow-wrap:anywhere;max-height:5.8em;overflow:hidden}
+#drop{inset:0;display:none;align-items:center;justify-content:center;background:rgba(20,20,20,.86);border:2px dashed var(--accent);font-size:18px;color:var(--fg);z-index:5;pointer-events:none}
+body.dragging #drop{display:flex}
+
+aside{background:var(--bg);border-left:1px solid var(--line);overflow-y:auto;min-height:0}
+section{padding:14px 16px;border-bottom:1px solid var(--line)}
+h2{margin:0 0 10px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+h2 span{font-variant-numeric:tabular-nums;letter-spacing:0}
+.status{display:flex;gap:12px;align-items:flex-start}
+.badge{flex:none;font-weight:600;font-size:13px;letter-spacing:.06em;padding:6px 12px;border-radius:6px;border:1px solid currentColor;display:flex;align-items:center;gap:8px}
+.badge::before{content:"";width:10px;height:10px;border-radius:50%;background:currentColor}
+.badge.ready{color:var(--ok);background:rgba(95,211,141,.1)}
+.badge.warning{color:var(--warn);background:rgba(255,169,49,.1)}
+.badge.warning::before{border-radius:2px;transform:rotate(45deg)}
+.badge.error{color:var(--err);background:rgba(255,92,92,.1)}
+.badge.error::before{border-radius:1px}
+.status p{margin:0}
+.fname{color:var(--fg);font-weight:500;overflow-wrap:anywhere}
+.sub{color:var(--muted);font-size:12px}
+.headline{font-size:18px;font-weight:600;color:var(--fg);margin:0 0 6px;text-wrap:balance;overflow-wrap:anywhere}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.chip{border:1px solid var(--line-strong);border-radius:4px;padding:1px 7px;font-size:12px;color:var(--text);background:var(--raised)}
+.desc{margin:8px 0 0;max-width:65ch}
+.pipe{display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px;align-items:center;margin-top:12px;font-size:12px}
+.pipe .track{height:6px;background:var(--raised);border-radius:3px;overflow:hidden}
+.pipe .fill{height:100%;background:#6f7f95;border-radius:3px}
+.pipe .n{font-variant-numeric:tabular-nums;color:var(--muted);text-align:right}
+ul.list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.item{background:var(--menu);border:1px solid var(--line);border-left-width:3px;border-radius:6px;padding:9px 11px}
+.item.error{border-left-color:var(--err)} .item.warning{border-left-color:var(--warn)} .item.note{border-left-color:var(--note)}
+.item.req{border-left-color:var(--fg)} .item.opt{border-left-color:#666}
+.item .top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.item .t{color:var(--fg);font-weight:500;overflow-wrap:anywhere;min-width:0}
+.item .d{margin:4px 0 0;color:var(--text);font-size:13px;overflow-wrap:anywhere}
+.item .m{margin:4px 0 0;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.lvl{flex:none;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:1px 6px;border-radius:3px;border:1px solid currentColor}
+.lvl.error{color:var(--err)} .lvl.warning{color:var(--warn)} .lvl.note{color:var(--note)}
+.lvl.req{color:var(--fg);background:rgba(255,255,255,.08)} .lvl.opt{color:var(--muted)}
+.cat{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.file{font-family:var(--font-mono);font-size:12.5px;color:var(--fg);overflow-wrap:anywhere}
+.links{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;font-size:12.5px}
+.linkbtn{background:none;border:0;padding:0;color:var(--accent);cursor:pointer;text-decoration:underline;text-underline-offset:2px;font-size:12.5px;text-align:left}
+.empty{color:var(--muted);margin:0}
+.foot{color:var(--muted);font-size:12px}
+.foot p{margin:0 0 6px}
+
+dialog{background:var(--bg);color:var(--text);border:1px solid var(--line-strong);border-radius:10px;padding:16px;width:min(640px,calc(100vw - 32px))}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+dialog h3{margin:0 0 8px;color:var(--fg);font-size:15px}
+dialog textarea{width:100%;height:260px;background:#222;border:1px solid var(--line-strong);border-radius:6px;padding:8px;font:12px/1.4 var(--font-mono);resize:vertical}
+dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+
+@media (max-width:860px){
+  body{overflow:auto;display:block}
+  html,body{height:auto}
+  main{display:block}
+  #stage{height:62vh;min-height:320px}
+  aside{border-left:0;border-top:1px solid var(--line);overflow:visible}
+  #legend{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>Workflow Checker</b><span>for ComfyUI</span></div>
+  <div class="bar">
+    <label class="sel" for="examples">Examples
+      <select id="examples" class="btn">
+        <option value="default">ComfyUI default workflow</option>
+        <option value="krea">Krea 2 Turbo, official template</option>
+        <option value="broken">Broken workflow</option>
+      </select>
+    </label>
+    <button class="btn" id="btn-paste" type="button">Paste JSON</button>
+    <button class="btn" id="btn-copy" type="button">Copy report</button>
+    <button class="btn primary" id="btn-open" type="button">Open workflow file</button>
+    <input type="file" id="file" accept=".json,.png,application/json,image/png" hidden>
+  </div>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="cv" aria-label="Workflow graph. Drag to pan, scroll or pinch to zoom, click a node for details."></canvas>
+    <div class="overlay" id="crumbs"></div>
+    <div class="overlay" id="legend"></div>
+    <div class="overlay" id="inspector"></div>
+    <div class="overlay" id="zoom">
+      <button class="btn" id="z-out" type="button" aria-label="Zoom out">&minus;</button>
+      <button class="btn" id="z-in" type="button" aria-label="Zoom in">+</button>
+      <button class="btn" id="z-fit" type="button">Fit</button>
+    </div>
+    <div class="overlay" id="drop">Drop a workflow .json or a ComfyUI .png</div>
+  </div>
+  <aside id="panel" aria-live="polite"></aside>
+</main>
+
+<dialog id="dlg-paste">
+  <h3>Paste workflow JSON</h3>
+  <textarea id="paste-text" spellcheck="false" placeholder='{"nodes": [...], "links": [...]}'></textarea>
+  <div class="row"><button class="btn" id="paste-cancel" type="button">Cancel</button><button class="btn primary" id="paste-go" type="button">Check workflow</button></div>
+</dialog>
+<dialog id="dlg-report">
+  <h3>Report</h3>
+  <textarea id="report-text" readonly spellcheck="false"></textarea>
+  <div class="row"><button class="btn primary" id="report-close" type="button">Close</button></div>
+</dialog>
+
+<script src="data.js"></script>
+<script src="samples.js"></script>
+<script src="engine.js"></script>
+<script>
+// app.js v1.0 - 2026-11-11 10:40 WIB : canvas renderer (ComfyUI default dark palette) + side panel
+(function () {
+'use strict';
+var C = window.ComfyCheck, D = C.data;
+// Values below are the defaults from ComfyUI_frontend: packages/theme-core/src/presets/dark.json and litegraph LiteGraphGlobal.ts
+var PAL = { CLIP:'#FFD500', CLIP_VISION:'#A8DADC', CLIP_VISION_OUTPUT:'#ad7452', CONDITIONING:'#FFA931', CONTROL_NET:'#6EE7B7', IMAGE:'#64B5F6',
+  LATENT:'#FF9CF9', MASK:'#81C784', MODEL:'#B39DDB', STYLE_MODEL:'#C2FFAE', VAE:'#FF6E6E', NOISE:'#B0B0B0', GUIDER:'#66FFFF', SAMPLER:'#ECB4B4',
+  SIGMAS:'#CDFFCD', TAESD:'#DCC274' };
+var LG = { TITLE_H:30, SLOT_H:20, WIDGET_H:20, GAP:4, NODE:'#333', NODE_BG:'#353535', BOX:'#666', TITLE:'#999', TEXT:'#AAA', LINK:'#9A9',
+  W_BG:'#222', W_LINE:'#666', W_TEXT:'#DDD', W_TEXT2:'#999', BYPASS:'#FF00FF', ERR:'#E00', R:8, BADGE_BG:'#0F1F0F' };
+var F = 'Inter, Arial, sans-serif';
+var $ = function (id) { return document.getElementById(id); };
+var cv = $('cv'), ctx = cv.getContext('2d'), stage = $('stage');
+var S = { L:null, A:null, name:'', example:null, graph:null, stack:[], scale:1, ox:0, oy:0, sel:null, marks:new Map() };
+
+function el(tag, attrs) {
+  var e = document.createElement(tag), i, a = attrs || {};
+  for (var k in a) { if (k === 'text') e.textContent = a[k]; else if (k === 'on') { for (var ev in a.on) e.addEventListener(ev, a.on[ev]); } else if (a[k] != null) e.setAttribute(k, a[k]); }
+  for (i = 2; i < arguments.length; i++) { var c = arguments[i]; if (c == null) continue; e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); }
+  return e;
+}
+function safeLink(href, label) { if (!/^https:\/\//i.test(String(href))) return null; return el('a', { href: href, target: '_blank', rel: 'noopener noreferrer', text: label }); }
+function typeColor(t) { return PAL[t] || LG.LINK; }
+
+// ---------- layout ----------
+function nodeLabel(n) {
+  if (n.title) return n.title;
+  var d = D.core[n.type]; if (d && d.d) return d.d;
+  if (S.L.subs.has(n.type)) return S.L.subs.get(n.type).name;
+  return String(n.type);
+}
+function layoutNode(n) {
+  var rows = n.type === 'Reroute' ? [] : C.widgetRows(n), isNote = n.type === 'Note' || n.type === 'MarkdownNote';
+  var sockets = n.inputs.filter(function (i) { return !i.widget; }), slotRows = Math.max(sockets.length, n.outputs.length);
+  var y = slotRows * LG.SLOT_H + (slotRows ? 6 : 8);
+  var w = n.hasSize ? n.size[0] : 300;
+  var multi = rows.filter(function (r) { r.multi = isNote || (typeof r.value === 'string' && (r.value.indexOf('\n') >= 0 || r.value.length > 70 || (/TextEncode|Multiline|Prompt/i.test(n.type) && r.t !== 'COMBO' && /^(text|value|prompt|string)/i.test(r.name || 'text')))); return r.multi; }).length;
+  var fixed = rows.length - multi;
+  var h = n.hasSize ? n.size[1] : y + fixed * 24 + multi * 90 + 8;
+  var avail = h - y - fixed * (LG.WIDGET_H + LG.GAP) - 6, mh = multi ? Math.max(40, avail / multi - LG.GAP) : 0;
+  var L = { x: n.pos[0], y: n.pos[1], w: w, h: Math.max(h, 10), rows: [], ins: [], outs: [], label: nodeLabel(n), collapsed: n.collapsed, reroute: n.type === 'Reroute' };
+  rows.forEach(function (r) { var rh = r.multi ? mh : LG.WIDGET_H; L.rows.push({ r: r, y: y, h: rh }); y += rh + LG.GAP; });
+  if (L.reroute) { L.w = n.hasSize ? n.size[0] : 75; L.h = 26; }
+  if (L.collapsed) { ctx.font = '14px ' + F; L.cw = Math.min(Math.max(80, ctx.measureText(L.label).width + 50), 400); }
+  var si = 0, extra = 0;
+  n.inputs.forEach(function (inp) {
+    var p;
+    if (L.collapsed) p = { x: L.x, y: L.y - LG.TITLE_H / 2 };
+    else if (L.reroute) p = { x: L.x, y: L.y + L.h / 2 };
+    else if (!inp.widget) { p = { x: L.x + 10, y: L.y + (si + 0.7) * LG.SLOT_H }; si++; }
+    else {
+      var row = L.rows.filter(function (q) { return q.r.name && (q.r.name === inp.widget || q.r.name === inp.label || q.r.name === inp.name); })[0];
+      p = row ? { x: L.x + 10, y: L.y + row.y + Math.min(row.h, LG.WIDGET_H) / 2, onWidget: true } : { x: L.x + 10, y: L.y + Math.min(L.h - 8, (sockets.length + 0.7 + extra++) * LG.SLOT_H), onWidget: true, loose: true };
+    }
+    L.ins.push(p);
+  });
+  n.outputs.forEach(function (o, i) {
+    L.outs.push(L.collapsed ? { x: L.x + L.cw, y: L.y - LG.TITLE_H / 2 } : L.reroute ? { x: L.x + L.w, y: L.y + L.h / 2 } : { x: L.x + L.w - 10, y: L.y + (i + 0.7) * LG.SLOT_H });
+  });
+  n._L = L;
+}
+function layoutGraph(G) {
+  if (G._laid) return; G.nodes.forEach(layoutNode);
+  if (G.isSub && G.io) {
+    ['inp', 'out'].forEach(function (k) {
+      var b = G.io[k], list = k === 'inp' ? G.io.inputs : G.io.outputs; if (!b) return;
+      var bb = b.bounding || [0, 0, 140, 60];
+      b._L = { x: +bb[0] || 0, y: +bb[1] || 0, w: +bb[2] || 140, h: Math.max(+bb[3] || 0, list.length * LG.SLOT_H + 28), slots: list.map(function (s, i) {
+        var px = k === 'inp' ? (+bb[0] || 0) + (+bb[2] || 140) - 14 : (+bb[0] || 0) + 14;
+        return { x: px, y: (+bb[1] || 0) + 24 + i * LG.SLOT_H, name: s.label || s.name || '', type: String(s.type || '*') };
+      }) };
+    });
+  }
+  G._laid = true;
+}
+function bounds(G) {
+  var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  function add(x, y, w, h) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h); }
+  G.nodes.forEach(function (n) { var L = n._L; if (L.collapsed) add(L.x, L.y - 30, L.cw, 30); else add(L.x, L.y - (L.reroute ? 0 : 30), L.w, L.h + (L.reroute ? 0 : 30)); });
+  G.groups.forEach(function (g) { add(g.x, g.y, g.w, g.h); });
+  if (G.io) ['inp', 'out'].forEach(function (k) { var b = G.io[k]; if (b && b._L) add(b._L.x, b._L.y, b._L.w, b._L.h); });
+  if (x0 === Infinity) return { x: 0, y: 0, w: 800, h: 600 };
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+function fit() {
+  var G = S.graph; if (!G) return; var b = bounds(G), W = stage.clientWidth, H = stage.clientHeight, pad = 48;
+  S.scale = Math.max(0.05, Math.min(1.2, Math.min((W - pad * 2) / Math.max(b.w, 1), (H - pad * 2 - 30) / Math.max(b.h, 1))));
+  S.ox = (W - b.w * S.scale) / 2 - b.x * S.scale; S.oy = (H - b.h * S.scale) / 2 - b.y * S.scale + 14; S.auto = true; draw();
+}
+
+// ---------- drawing ----------
+var mcache = new Map();
+function clipText(str, maxW, font) {
+  str = String(str).replace(/\s+/g, ' ');
+  if (maxW <= 4) return '';
+  var key = font + '|' + maxW.toFixed(0) + '|' + str.slice(0, 200), c = mcache.get(key); if (c !== undefined) return c;
+  ctx.font = font; var s = str.length > 200 ? str.slice(0, 200) : str;
+  if (ctx.measureText(s).width > maxW) { var lo = 0, hi = s.length; while (lo < hi) { var mid = (lo + hi + 1) >> 1; if (ctx.measureText(s.slice(0, mid) + '…').width <= maxW) lo = mid; else hi = mid - 1; } s = s.slice(0, lo) + '…'; }
+  if (mcache.size > 6000) mcache.clear(); mcache.set(key, s); return s;
+}
+function wrapLines(str, maxW, font, maxLines) {
+  var key = 'W' + font + '|' + maxW.toFixed(0) + '|' + maxLines + '|' + str.length + '|' + str.slice(0, 120), c = mcache.get(key); if (c) return c;
+  ctx.font = font; var out = [], paras = String(str).split('\n');
+  for (var p = 0; p < paras.length && out.length < maxLines; p++) {
+    var words = paras[p].split(' '), line = '';
+    for (var i = 0; i < words.length; i++) {
+      var t = line ? line + ' ' + words[i] : words[i];
+      if (ctx.measureText(t).width > maxW && line) { out.push(line); line = words[i]; if (out.length >= maxLines) break; } else line = t;
+    }
+    if (out.length < maxLines) out.push(line);
+  }
+  mcache.set(key, out); return out;
+}
+function rr(x, y, w, h, r) { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); }
+function fmt(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(+v.toFixed(3));
+  if (typeof v === 'object') { try { return JSON.stringify(v); } catch (e) { return '[object]'; } }
+  return String(v);
+}
+function linkEnds(G, l) {
+  var a = null, b = null, o, t;
+  if (G.isSub && Number(l.o) === -10) { var s = G.io.inp && G.io.inp._L && G.io.inp._L.slots[l.os]; if (s) a = s; }
+  else { o = G.byId.get(String(l.o)); if (o && o._L.outs[l.os]) a = o._L.outs[l.os]; else if (o && o._L.outs.length) a = o._L.outs[0]; }
+  if (G.isSub && Number(l.t) === -20) { var s2 = G.io.out && G.io.out._L && G.io.out._L.slots[l.ts]; if (s2) b = s2; }
+  else { t = G.byId.get(String(l.t)); if (t) { var idx = -1; t.inputs.forEach(function (inp, i) { if (String(inp.link) === String(l.id)) idx = i; }); if (idx < 0 && t._L.ins[l.ts]) idx = l.ts; if (idx >= 0) b = t._L.ins[idx]; } }
+  return a && b ? { a: a, b: b, o: o, t: t } : null;
+}
+function draw() {
+  var dpr = window.devicePixelRatio || 1, W = stage.clientWidth, H = stage.clientHeight;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#141414'; ctx.fillRect(0, 0, W, H);
+  var G = S.graph; if (!G) return;
+  var s = S.scale, vx0 = -S.ox / s, vy0 = -S.oy / s, vx1 = vx0 + W / s, vy1 = vy0 + H / s;
+  // grid: 10px minor, 100px major, like the default background tile
+  ctx.lineWidth = 1;
+  [[10, '#1a1a1a', 0.55], [100, '#252525', 0.09]].forEach(function (g) {
+    if (s < g[2]) return; ctx.strokeStyle = g[1]; ctx.beginPath();
+    for (var x = Math.floor(vx0 / g[0]) * g[0]; x < vx1; x += g[0]) { var px = Math.round(x * s + S.ox) + 0.5; ctx.moveTo(px, 0); ctx.lineTo(px, H); }
+    for (var y = Math.floor(vy0 / g[0]) * g[0]; y < vy1; y += g[0]) { var py = Math.round(y * s + S.oy) + 0.5; ctx.moveTo(0, py); ctx.lineTo(W, py); }
+    ctx.stroke();
+  });
+  ctx.translate(S.ox, S.oy); ctx.scale(s, s);
+  // groups
+  G.groups.forEach(function (g) {
+    ctx.globalAlpha = 0.25; ctx.fillStyle = g.color; ctx.fillRect(g.x, g.y, g.w, g.h);
+    ctx.globalAlpha = 1; ctx.strokeStyle = g.color; ctx.lineWidth = 1; ctx.strokeRect(g.x + 0.5, g.y + 0.5, g.w, g.h);
+    ctx.fillStyle = g.color; ctx.font = g.fontSize + 'px ' + F; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(clipText(g.title, g.w - 8, g.fontSize + 'px ' + F), g.x + 4, g.y + g.fontSize);
+  });
+  // cables
+  var selKey = S.sel && S.sel.graphId === G.id ? S.sel.key : null;
+  ctx.lineCap = 'round';
+  G.links.forEach(function (l) {
+    var e = linkEnds(G, l); if (!e) return;
+    var a = e.a, b = e.b, dist = Math.hypot(b.x - a.x, b.y - a.y), cp = dist * 0.25;
+    var hot = selKey && ((e.o && e.o.key === selKey) || (e.t && e.t.key === selKey));
+    var off = (e.o && e.o.mode !== 0) || (e.t && e.t.mode !== 0);
+    ctx.globalAlpha = off ? 0.35 : selKey && !hot ? 0.45 : 0.9; ctx.strokeStyle = typeColor(l.type); ctx.lineWidth = hot ? 4.5 : 3;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.bezierCurveTo(a.x + cp, a.y, b.x - cp, b.y, b.x, b.y); ctx.stroke();
+    if (s > 0.35) { var mx = (a.x + b.x) / 2, my = 0.125 * a.y + 0.375 * a.y + 0.375 * b.y + 0.125 * b.y; ctx.fillStyle = typeColor(l.type); ctx.beginPath(); ctx.arc(mx, my, 5, 0, 6.3); ctx.fill(); }
+  });
+  ctx.globalAlpha = 1;
+  // subgraph boundary nodes
+  if (G.io) ['inp', 'out'].forEach(function (k) {
+    var b = G.io[k]; if (!b || !b._L) return; var L = b._L;
+    rr(L.x, L.y, L.w, L.h, 10); ctx.fillStyle = '#262626'; ctx.fill(); ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.font = '11px ' + F; ctx.fillStyle = '#888'; ctx.textAlign = k === 'inp' ? 'right' : 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(k === 'inp' ? 'INPUTS' : 'OUTPUTS', k === 'inp' ? L.x + L.w - 12 : L.x + 12, L.y + 10);
+    L.slots.forEach(function (sl) {
+      ctx.fillStyle = typeColor(sl.type); ctx.beginPath(); ctx.arc(sl.x, sl.y, 4, 0, 6.3); ctx.fill();
+      ctx.fillStyle = LG.TEXT; ctx.font = '12px ' + F;
+      ctx.fillText(clipText(sl.name, L.w - 34, '12px ' + F), k === 'inp' ? sl.x - 10 : sl.x + 10, sl.y);
+    });
+  });
+  // nodes
+  var lod = s > 0.28;
+  G.nodes.forEach(function (n) {
+    var L = n._L; if (L.x > vx1 || L.x + Math.max(L.w, L.cw || 0) < vx0 || L.y - 50 > vy1 || L.y + L.h < vy0) return;
+    var mark = S.marks.get(G.id + '|' + n.key), selected = selKey === n.key;
+    var color = n.color || LG.NODE, bg = n.bgcolor || LG.NODE_BG;
+    ctx.globalAlpha = n.mode === 2 ? 0.45 : 1;
+    if (L.reroute) {
+      rr(L.x, L.y, L.w, L.h, 13); ctx.fillStyle = bg; ctx.fill();
+      ctx.fillStyle = typeColor(n.outputs[0] ? n.outputs[0].type : '*'); ctx.beginPath(); ctx.arc(L.x + 2, L.y + L.h / 2, 4, 0, 6.3); ctx.arc(L.x + L.w - 2, L.y + L.h / 2, 4, 0, 6.3); ctx.fill();
+      if (selected) { rr(L.x - 2, L.y - 2, L.w + 4, L.h + 4, 14); ctx.strokeStyle = '#FFF'; ctx.lineWidth = 1.5; ctx.stroke(); }
+      ctx.globalAlpha = 1; return;
+    }
+    var top = L.y - LG.TITLE_H, fullH = L.collapsed ? LG.TITLE_H : L.h + LG.TITLE_H, fullW = L.collapsed ? L.cw : L.w;
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 10 * Math.min(1, s); ctx.shadowOffsetX = 2 * s; ctx.shadowOffsetY = 2 * s;
+    rr(L.x, top, fullW, fullH, LG.R); ctx.fillStyle = bg; ctx.fill(); ctx.restore();
+    ctx.save(); rr(L.x, top, fullW, fullH, LG.R); ctx.clip();
+    ctx.fillStyle = color; ctx.fillRect(L.x, top, fullW, LG.TITLE_H);
+    if (n.mode === 4) { ctx.globalAlpha = 0.2; ctx.fillStyle = LG.BYPASS; ctx.fillRect(L.x, top, fullW, fullH); ctx.globalAlpha = 1; }
+    ctx.fillStyle = LG.BOX; ctx.beginPath(); ctx.arc(L.x + 15, top + 15, 5, 0, 6.3); ctx.fill();
+    if (lod) { ctx.font = '14px ' + F; ctx.fillStyle = selected ? '#FFF' : LG.TITLE; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(clipText(L.label, fullW - 40, '14px ' + F), L.x + 30, top + 15.5); }
+    if (!L.collapsed) {
+      var isNote = n.type === 'Note' || n.type === 'MarkdownNote';
+      // sockets
+      n.inputs.forEach(function (inp, i) {
+        var p = L.ins[i]; if (p.loose && p.y > L.y + L.h - 6) return;
+        ctx.fillStyle = typeColor(inp.type); ctx.beginPath(); ctx.arc(p.x, p.y, p.onWidget ? 3 : 4, 0, 6.3); ctx.fill();
+        if (!p.onWidget && lod) { ctx.fillStyle = LG.TEXT; ctx.font = '12px ' + F; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(clipText(inp.label || inp.name, L.w / 2 - 20, '12px ' + F), p.x + 10, p.y + 0.5); }
+      });
+      n.outputs.forEach(function (o, i) {
+        var p = L.outs[i]; ctx.fillStyle = typeColor(o.type); ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 6.3); ctx.fill();
+        if (lod) { ctx.fillStyle = LG.TEXT; ctx.font = '12px ' + F; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(clipText(o.name, L.w / 2 - 20, '12px ' + F), p.x - 10, p.y + 0.5); }
+      });
+      // widgets
+      L.rows.forEach(function (row) {
+        var y = L.y + row.y, x = L.x + 15, w = L.w - 30, r = row.r; if (row.y > L.h) return;
+        if (r.multi) {
+          var h = Math.min(row.h, L.y + L.h - y - 4); if (h < 14) return;
+          rr(L.x + 10, y, L.w - 20, h, 4); ctx.fillStyle = isNote ? '#2a2a2a' : LG.W_BG; ctx.fill();
+          if (lod) { ctx.fillStyle = LG.W_TEXT; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; var fnt = (isNote ? '12px ' : '11px ') + F, lh = isNote ? 16 : 14;
+            var lines = wrapLines(fmt(r.value).slice(0, 1500), L.w - 32, fnt, Math.max(1, Math.floor((h - 8) / lh))); ctx.font = fnt;
+            lines.forEach(function (ln, i) { ctx.fillText(clipText(ln, L.w - 32, fnt), L.x + 16, y + 5 + i * lh); }); }
+          return;
+        }
+        rr(x, y, w, LG.WIDGET_H, 10); ctx.fillStyle = LG.W_BG; ctx.fill(); ctx.strokeStyle = LG.W_LINE; ctx.lineWidth = 1; ctx.stroke();
+        if (!lod) return;
+        var isNum = typeof r.value === 'number', isBool = typeof r.value === 'boolean', arrows = isNum || r.t === 'COMBO' || r.t === 'SAMPLERS' || r.t === 'SCHEDULERS' || !!r.folder;
+        ctx.textBaseline = 'middle'; ctx.font = '12px ' + F;
+        var padL = arrows ? 22 : 12, padR = arrows ? 22 : isBool ? 24 : 12, nameW = 0;
+        if (arrows) { ctx.fillStyle = LG.W_TEXT2; ctx.beginPath(); ctx.moveTo(x + 14, y + 5); ctx.lineTo(x + 8, y + 10); ctx.lineTo(x + 14, y + 15); ctx.fill(); ctx.beginPath(); ctx.moveTo(x + w - 14, y + 5); ctx.lineTo(x + w - 8, y + 10); ctx.lineTo(x + w - 14, y + 15); ctx.fill(); }
+        if (r.name) { var nm = clipText(r.name, (w - padL - padR) * 0.5, '12px ' + F); ctx.fillStyle = LG.W_TEXT2; ctx.textAlign = 'left'; ctx.fillText(nm, x + padL, y + 10.5); nameW = ctx.measureText(nm).width + 10; }
+        if (isBool) { ctx.fillStyle = r.value ? '#89A' : '#333'; ctx.beginPath(); ctx.arc(x + w - 14, y + 10, 5, 0, 6.3); ctx.fill(); }
+        ctx.fillStyle = LG.W_TEXT; ctx.textAlign = 'right';
+        ctx.fillText(clipText(fmt(r.value), w - padL - padR - nameW, '12px ' + F), x + w - padR, y + 10.5);
+      });
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    // pack badge, like ComfyUI's node source badge
+    var bi = S.A && S.A.inst ? packOf(G, n) : null;
+    if (bi && lod && !L.collapsed) {
+      ctx.font = '10px ' + F; var bt = clipText(bi, Math.max(40, fullW - 20), '10px ' + F), bw = ctx.measureText(bt).width + 12;
+      rr(L.x + fullW - bw, top - 18, bw, 15, 4); ctx.fillStyle = LG.BADGE_BG; ctx.fill(); ctx.fillStyle = '#FFF'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(bt, L.x + fullW - bw / 2, top - 10);
+    }
+    if (mark || selected) {
+      rr(L.x - 3, top - 3, fullW + 6, fullH + 6, LG.R + 3); ctx.lineWidth = Math.max(2, 2 / s);
+      ctx.strokeStyle = selected ? '#FFF' : mark === 'error' ? LG.ERR : '#FFA931'; ctx.stroke();
+      if (selected && mark) { rr(L.x - 7, top - 7, fullW + 14, fullH + 14, LG.R + 7); ctx.strokeStyle = mark === 'error' ? LG.ERR : '#FFA931'; ctx.stroke(); }
+    }
+  });
+}
+var instIndex = new Map();
+function packOf(G, n) { var x = instIndex.get(G.id + '|' + n.key); return x ? (x.unknown ? 'unknown node' : x.pack ? x.pack.title : null) : null; }
+
+// ---------- interaction ----------
+function toWorld(px, py) { return { x: (px - S.ox) / S.scale, y: (py - S.oy) / S.scale }; }
+function hit(px, py) {
+  var G = S.graph, p = toWorld(px, py); if (!G) return null;
+  for (var i = G.nodes.length - 1; i >= 0; i--) { var n = G.nodes[i], L = n._L, top = L.reroute ? L.y : L.y - LG.TITLE_H, w = L.collapsed ? L.cw : L.w, h = L.collapsed ? LG.TITLE_H : L.h + (L.reroute ? 0 : LG.TITLE_H); if (p.x >= L.x && p.x <= L.x + w && p.y >= top && p.y <= top + h) return n; }
+  return null;
+}
+function zoomAt(px, py, f) { S.auto = false; var ns = Math.max(0.05, Math.min(3, S.scale * f)); f = ns / S.scale; S.ox = px - (px - S.ox) * f; S.oy = py - (py - S.oy) * f; S.scale = ns; draw(); }
+var ptrs = new Map(), moved = 0, pinch = 0;
+cv.addEventListener('pointerdown', function (e) { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.offsetX, y: e.offsetY }); moved = 0; cv.classList.add('drag'); if (ptrs.size === 2) { var a = Array.from(ptrs.values()); pinch = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y); } });
+cv.addEventListener('pointermove', function (e) {
+  var p = ptrs.get(e.pointerId); if (!p) return; var dx = e.offsetX - p.x, dy = e.offsetY - p.y; p.x = e.offsetX; p.y = e.offsetY; moved += Math.abs(dx) + Math.abs(dy);
+  if (ptrs.size === 1) { S.ox += dx; S.oy += dy; if (moved > 4) S.auto = false; draw(); }
+  else if (ptrs.size === 2) { var a = Array.from(ptrs.values()), d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y); if (pinch > 0 && d > 0) zoomAt((a[0].x + a[1].x) / 2, (a[0].y + a[1].y) / 2, d / pinch); pinch = d; }
+});
+function up(e) { if (!ptrs.has(e.pointerId)) return; var wasOne = ptrs.size === 1; ptrs.delete(e.pointerId); if (!ptrs.size) cv.classList.remove('drag'); if (wasOne && moved < 5 && e.type === 'pointerup') { var n = hit(e.offsetX, e.offsetY); select(n ? { graphId: S.graph.id, key: n.key } : null); } }
+cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+cv.addEventListener('wheel', function (e) { e.preventDefault(); zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015))); }, { passive: false });
+cv.addEventListener('dblclick', function (e) { var n = hit(e.offsetX, e.offsetY); if (n && S.L.subs.has(n.type)) enter(n.type); });
+$('z-in').onclick = function () { zoomAt(stage.clientWidth / 2, stage.clientHeight / 2, 1.25); };
+$('z-out').onclick = function () { zoomAt(stage.clientWidth / 2, stage.clientHeight / 2, 0.8); };
+$('z-fit').onclick = fit;
+new ResizeObserver(function () { if (S.auto && S.graph) fit(); else draw(); }).observe(stage);
+
+function showGraph(G, keepView) { S.graph = G; layoutGraph(G); crumbs(); legend(); if (!keepView) fit(); else draw(); }
+function enter(subId) { var G = S.L.subs.get(subId); if (!G) return; S.stack.push(S.graph); select(null); showGraph(G); }
+function back(toIndex) { var G = S.stack[toIndex]; S.stack = S.stack.slice(0, toIndex); select(null); showGraph(G); }
+function focusNode(graphId, key) {
+  var G = graphId === 'root' ? S.L.root : S.L.subs.get(graphId); if (!G) return;
+  if (S.graph !== G) { if (G === S.L.root) S.stack = []; else if (S.stack.indexOf(G) >= 0) S.stack = S.stack.slice(0, S.stack.indexOf(G)); else S.stack.push(S.graph); S.graph = G; layoutGraph(G); crumbs(); legend(); }
+  var n = G.byId.get(key); if (!n) { fit(); return; }
+  var L = n._L, W = stage.clientWidth, H = stage.clientHeight;
+  S.scale = Math.max(0.35, Math.min(1, Math.min((W - 120) / Math.max(L.w, 1), (H - 160) / Math.max(L.h + 30, 1))));
+  S.ox = W / 2 - (L.x + L.w / 2) * S.scale; S.oy = H / 2 - (L.y + L.h / 2 - 15) * S.scale;
+  S.auto = false;
+  select({ graphId: G.id, key: key });
+  if (window.matchMedia('(max-width:860px)').matches) stage.scrollIntoView({ block: 'start' });
+}
+function crumbs() {
+  var c = $('crumbs'); c.textContent = '';
+  if (S.example) c.appendChild(el('span', { class: 'pill', text: 'Example loaded: ' + S.example + '. Drop your own .json or ComfyUI .png anywhere on this page.' }));
+  if (S.stack.length) {
+    var p = el('span', { class: 'pill' });
+    S.stack.forEach(function (g, i) { p.appendChild(el('button', { type: 'button', text: g.name, on: { click: function () { back(i); } } })); p.appendChild(document.createTextNode('  ›  ')); });
+    p.appendChild(document.createTextNode(S.graph.name)); c.appendChild(p);
+  }
+}
+function legend() {
+  var lg = $('legend'), seen = {}; lg.textContent = '';
+  S.graph.links.forEach(function (l) { seen[l.type] = (seen[l.type] || 0) + 1; });
+  var keys = Object.keys(seen).filter(function (k) { return k !== '*'; }).sort(function (a, b) { return seen[b] - seen[a]; }).slice(0, 9);
+  keys.forEach(function (k) { var s = el('span', {}, el('i', { style: 'background:' + typeColor(k) }), k); lg.appendChild(s); });
+  lg.style.display = keys.length && !S.sel ? '' : 'none';
+}
+function select(sel) {
+  S.sel = sel; var box = $('inspector'); box.textContent = '';
+  if (!sel) { box.style.display = 'none'; legend(); draw(); return; }
+  var G = S.graph, n = G.byId.get(sel.key), x = instIndex.get(G.id + '|' + n.key), def = D.core[n.type], isSub = S.L.subs.has(n.type);
+  box.appendChild(el('button', { class: 'btn small close', type: 'button', text: 'Close', on: { click: function () { select(null); } } }));
+  box.appendChild(el('h3', { text: nodeLabel(n) }));
+  box.appendChild(el('div', { class: 'sub mono', text: isSub ? 'Subgraph' : String(n.type) + '  #' + n.key }));
+  var dl = el('dl', { class: 'kv' });
+  function row(k, v) { dl.appendChild(el('dt', { text: k })); var dd = el('dd'); if (typeof v === 'string') { dd.textContent = v; dd.title = v.length > 80 ? v.slice(0, 2000) : ''; } else dd.appendChild(v); dl.appendChild(dd); }
+  var src = isSub ? 'Subgraph (stored in this file)' : C.FRONTEND[n.type] ? 'ComfyUI interface node' : (def || n.props.cnr_id === 'comfy-core') ? 'ComfyUI core' + (def && def.api ? ' (partner API)' : '') : x && x.pack ? x.pack.title : 'Unknown';
+  if (x && x.pack && x.pack.url && safeLink(x.pack.url, src)) row('Source', safeLink(x.pack.url, src)); else row('Source', src);
+  row('State', n.mode === 2 ? 'Muted' : n.mode === 4 ? 'Bypassed' : 'Active');
+  if (x && !C.FRONTEND[n.type]) row('Role', x.need === 'req' ? 'Required: leads to an output' : x.need === 'cond' ? 'Optional: behind a switch' : x.need === 'off' ? 'Skipped when running' : 'Not connected to an output');
+  C.widgetRows(n).slice(0, 24).forEach(function (r, i) { row(r.name || 'value ' + (i + 1), fmt(r.value).slice(0, 400)); });
+  box.appendChild(dl);
+  S.A.issues.filter(function (i) { return i.graphId === G.id && i.nodeKey === n.key; }).forEach(function (i) { box.appendChild(el('p', { class: 'sub', style: 'margin:8px 0 0;color:' + (i.level === 'error' ? 'var(--err)' : i.level === 'warning' ? 'var(--warn)' : 'var(--note)'), text: i.title })); });
+  if (isSub) box.appendChild(el('div', { class: 'links' }, el('button', { class: 'btn small', type: 'button', text: 'Open subgraph', on: { click: function () { enter(n.type); } } })));
+  box.style.display = 'block'; $('legend').style.display = 'none'; draw();
+}
+
+// ---------- side panel ----------
+function locate(graphId, key, label) { return el('button', { class: 'linkbtn', type: 'button', text: label || 'Show node', on: { click: function () { focusNode(graphId, key); } } }); }
+function panel() {
+  var A = S.A, L = S.L, p = $('panel'); p.textContent = '';
+  var word = A.status === 'ready' ? 'READY' : A.status === 'warning' ? 'WARNING' : 'ERROR';
+  var line = A.status === 'ready' ? 'No problems found in the file.' : A.status === 'warning' ? 'It can run, but ' + A.counts.warning + ' thing' + (A.counts.warning > 1 ? 's need' : ' needs') + ' attention first.' : 'It cannot run as it is: ' + (A.counts ? A.counts.error : 1) + ' blocking problem' + (A.counts && A.counts.error > 1 ? 's' : '') + '.';
+  p.appendChild(el('section', {}, el('div', { class: 'status' }, el('div', { class: 'badge ' + A.status, text: word }),
+    el('div', {}, el('p', { class: 'fname', text: S.name }), el('p', { class: 'sub', text: line }))),
+    el('p', { class: 'sub', style: 'margin:10px 0 0', text: 'This is a check of the file only. It cannot see which models and node packs are installed on your machine.' })));
+  if (A.kind) {
+    var k = A.kind, sec = el('section', {}, el('h2', { text: 'What this workflow is' }), el('p', { class: 'headline', text: k.headline }));
+    if (k.chips.length) { var ch = el('div', { class: 'chips' }); k.chips.forEach(function (c) { ch.appendChild(el('span', { class: 'chip', text: c })); }); sec.appendChild(ch); }
+    if (k.settings) sec.appendChild(el('p', { class: 'sub mono', text: k.settings }));
+    sec.appendChild(el('p', { class: 'desc', text: k.description }));
+    if (k.pipeline.length) { var max = Math.max.apply(null, k.pipeline.map(function (x) { return x.n; })), g = el('div', { class: 'pipe' });
+      k.pipeline.forEach(function (x) { g.appendChild(el('span', { text: x.name })); g.appendChild(el('span', { class: 'track' }, el('span', { class: 'fill', style: 'display:block;width:' + Math.round(x.n / max * 100) + '%' }))); g.appendChild(el('span', { class: 'n', text: String(x.n) })); });
+      sec.appendChild(g); }
+    p.appendChild(sec);
+  }
+  // issues
+  var si = el('section', {}, el('h2', {}, 'Issues', el('span', { text: A.counts ? A.counts.error + ' errors · ' + A.counts.warning + ' warnings · ' + A.counts.note + ' notes' : '1 error' })));
+  if (!A.issues.length) si.appendChild(el('p', { class: 'empty', text: 'Nothing to report. Every required input is connected and an output node is present.' }));
+  else { var ul = el('ul', { class: 'list' }); A.issues.forEach(function (i) {
+    var li = el('li', { class: 'item ' + i.level }, el('div', { class: 'top' }, el('span', { class: 't', text: i.title }), el('span', { class: 'lvl ' + i.level, text: i.level })));
+    if (i.detail) li.appendChild(el('p', { class: 'd', text: i.detail }));
+    if (i.nodeKey && i.graphId) li.appendChild(el('div', { class: 'links' }, locate(i.graphId, i.nodeKey)));
+    ul.appendChild(li); }); si.appendChild(ul); }
+  p.appendChild(si);
+  if (!L.ok) { footer(p); return; }
+  // models
+  var req = A.models.filter(function (m) { return m.need === 'req'; }).length;
+  var sm = el('section', {}, el('h2', {}, 'Models', el('span', { text: A.models.length ? req + ' required · ' + (A.models.length - req) + ' optional' : '0' })));
+  if (!A.models.length) sm.appendChild(el('p', { class: 'empty', text: 'No model files are referenced. The workflow either uses cloud API nodes or only processes existing media.' }));
+  else { var um = el('ul', { class: 'list' }); A.models.forEach(function (m) {
+    var isReq = m.need === 'req', li = el('li', { class: 'item ' + (isReq ? 'req' : 'opt') }, el('div', { class: 'cat', text: m.catLabel }),
+      el('div', { class: 'top' }, el('span', { class: 'file', text: m.name }), el('span', { class: 'lvl ' + (isReq ? 'req' : 'opt'), text: isReq ? 'Required' : 'Optional' })),
+      el('p', { class: 'm', text: C.needWhy(m.need, m.modifier) + ' Goes in ' + m.folder + '.' }));
+    var lk = el('div', { class: 'links' }); m.links.forEach(function (l) { var a = safeLink(l.href, l.label); if (a) lk.appendChild(a); });
+    if (m.users[0]) lk.appendChild(locate(m.users[0].graphId, m.users[0].nodeKey, 'Show loader'));
+    li.appendChild(lk);
+    if (!m.exact) li.appendChild(el('p', { class: 'm', text: 'No source is recorded in the workflow or the catalogue, so these are searches by file name.' }));
+    um.appendChild(li); }); sm.appendChild(um); }
+  p.appendChild(sm);
+  // custom nodes
+  var rp = A.packs.filter(function (x) { return x.need === 'req' || x.need === 'cond'; }).length;
+  var sp = el('section', {}, el('h2', {}, 'Custom nodes', el('span', { text: A.packs.length || A.unknown.length ? rp + ' required · ' + (A.packs.length - rp) + ' optional' : '0' })));
+  if (!A.packs.length && !A.unknown.length) sp.appendChild(el('p', { class: 'empty', text: 'None. Every node here ships with ComfyUI itself.' }));
+  var up2 = el('ul', { class: 'list' });
+  A.packs.forEach(function (pk) {
+    var isReq = pk.need === 'req' || pk.need === 'cond', types = Array.from(pk.types.keys());
+    var li = el('li', { class: 'item ' + (isReq ? 'req' : 'opt') }, el('div', { class: 'cat', text: 'Node pack' + (pk.ver ? ' · saved with ' + (pk.ver.length > 12 ? pk.ver.slice(0, 7) : pk.ver) : '') }),
+      el('div', { class: 'top' }, el('span', { class: 't', text: pk.title }), el('span', { class: 'lvl ' + (isReq ? 'req' : 'opt'), text: isReq ? 'Required' : 'Optional' })),
+      el('p', { class: 'm', text: C.needWhy(pk.need === 'cond' ? 'cond' : pk.need, false) }),
+      el('p', { class: 'm mono', text: types.slice(0, 6).join(', ') + (types.length > 6 ? ' +' + (types.length - 6) + ' more' : '') }));
+    var lk = el('div', { class: 'links' }), a = pk.url && safeLink(pk.url, /github\.com/.test(pk.url) ? 'GitHub repository' : 'Repository'), r = pk.registry && safeLink(pk.registry, 'Comfy Registry');
+    if (a) lk.appendChild(a); if (r) lk.appendChild(r);
+    var first = A.inst.filter(function (x) { return x.pack === pk; })[0]; if (first) lk.appendChild(locate(first.graph.id, first.node.key, 'Show a node'));
+    li.appendChild(lk);
+    if (pk.guessed) li.appendChild(el('p', { class: 'm', text: 'The file does not name the pack. This is the best match from the ComfyUI-Manager catalogue' + (pk.alt ? '; ' + pk.alt + ' other pack' + (pk.alt > 1 ? 's define' : ' defines') + ' nodes with the same names.' : '.') }));
+    up2.appendChild(li);
+  });
+  A.unknown.forEach(function (t) {
+    var first = A.inst.filter(function (x) { return x.unknown && String(x.node.type) === t; })[0];
+    var li = el('li', { class: 'item warning' }, el('div', { class: 'cat', text: 'Unidentified node' }), el('div', { class: 'top' }, el('span', { class: 'file', text: t }), el('span', { class: 'lvl warning', text: 'Unknown' })),
+      el('p', { class: 'm', text: 'No pack in the catalogue provides this node type.' }));
+    var lk = el('div', { class: 'links' }), a = safeLink('https://github.com/search?type=code&q=' + encodeURIComponent('"' + t + '" NODE_CLASS_MAPPINGS'), 'Search GitHub code');
+    if (a) lk.appendChild(a); if (first) lk.appendChild(locate(first.graph.id, first.node.key));
+    li.appendChild(lk); up2.appendChild(li);
+  });
+  if (up2.children.length) sp.appendChild(up2);
+  p.appendChild(sp);
+  footer(p);
+}
+function footer(p) {
+  p.appendChild(el('section', { class: 'foot' },
+    el('p', { text: 'Checked against ComfyUI core ' + D.coreVersion + ' (' + Object.keys(D.core).length.toLocaleString('en-US') + ' node types) and the ComfyUI-Manager catalogue (' + D.packs.length.toLocaleString('en-US') + ' packs, ' + Object.keys(D.models).length + ' model links), snapshot ' + D.built + '. Newer nodes may show as unknown.' }),
+    el('p', { text: 'Your file is read in this browser tab and is not uploaded anywhere.' })));
+}
+
+// ---------- loading ----------
+function run(text, name, example) {
+  S.L = C.load(text); S.A = C.analyze(S.L); S.name = name; S.example = example || null; S.stack = []; S.sel = null; S.marks = new Map(); instIndex = new Map(); mcache.clear();
+  (S.A.inst || []).forEach(function (x) { instIndex.set(x.graph.id + '|' + x.node.key, x); });
+  S.A.issues.forEach(function (i) { if (!i.nodeKey || i.level === 'note') return; var k = i.graphId + '|' + i.nodeKey; if (S.marks.get(k) !== 'error') S.marks.set(k, i.level); });
+  // mark the subgraph node at root when an issue lives inside it
+  if (S.L.ok) S.A.issues.forEach(function (i) { if (i.level === 'note' || !i.graphId || i.graphId === 'root') return; S.L.root.nodes.forEach(function (n) { if (n.type === i.graphId) { var k = 'root|' + n.key; if (S.marks.get(k) !== 'error') S.marks.set(k, i.level); } }); });
+  $('inspector').style.display = 'none';
+  if (S.L.ok) showGraph(S.L.root); else { S.graph = null; $('legend').style.display = 'none'; crumbs(); draw(); }
+  panel(); $('panel').scrollTop = 0;
+}
+function fail(name, title, detail) { S.L = { ok: false, fatal: { title: title, detail: detail }, subs: new Map() }; S.A = C.analyze(S.L); S.name = name; S.example = null; S.graph = null; S.stack = []; $('inspector').style.display = 'none'; $('legend').style.display = 'none'; crumbs(); draw(); panel(); }
+function readFile(f) {
+  if (!f) return;
+  f.arrayBuffer().then(function (buf) {
+    if (C.isPng(buf)) { var t = null; try { t = C.pngWorkflow(buf); } catch (e) { t = null; }
+      if (!t) return fail(f.name, 'No workflow inside this PNG', 'ComfyUI stores the workflow in the image metadata, but this file has none. It was probably re-saved, screenshotted or sent through a chat app that strips metadata. Use the original file from the ComfyUI output folder.');
+      return run(t, f.name); }
+    if (/\.(jpe?g|webp|gif|mp4|webm)$/i.test(f.name)) return fail(f.name, 'This file type is not supported', 'Drop a workflow .json, or a .png saved by ComfyUI (it carries the workflow in its metadata).');
+    run(new TextDecoder('utf-8').decode(buf), f.name);
+  }).catch(function (e) { fail(f.name, 'Could not read the file', String(e && e.message || e)); });
+}
+$('btn-open').onclick = function () { $('file').click(); };
+$('file').onchange = function (e) { readFile(e.target.files[0]); e.target.value = ''; };
+var dragN = 0;
+window.addEventListener('dragenter', function (e) { e.preventDefault(); dragN++; document.body.classList.add('dragging'); });
+window.addEventListener('dragleave', function () { dragN = Math.max(0, dragN - 1); if (!dragN) document.body.classList.remove('dragging'); });
+window.addEventListener('dragover', function (e) { e.preventDefault(); });
+window.addEventListener('drop', function (e) { e.preventDefault(); dragN = 0; document.body.classList.remove('dragging'); var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) readFile(f); else { var t = e.dataTransfer && e.dataTransfer.getData('text'); if (t) run(t, 'Dropped text'); } });
+window.addEventListener('paste', function (e) { if (e.target && /TEXTAREA|INPUT/.test(e.target.tagName)) return; var t = e.clipboardData && e.clipboardData.getData('text'); if (t && /^\s*[{[]/.test(t)) run(t, 'Pasted workflow'); });
+$('btn-paste').onclick = function () { $('paste-text').value = ''; $('dlg-paste').showModal(); };
+$('paste-cancel').onclick = function () { $('dlg-paste').close(); };
+$('paste-go').onclick = function () { var t = $('paste-text').value; $('dlg-paste').close(); run(t, 'Pasted workflow'); };
+$('report-close').onclick = function () { $('dlg-report').close(); };
+$('btn-copy').onclick = function () {
+  var txt = C.report(S.L, S.A, S.name), b = $('btn-copy');
+  function fallback() { $('report-text').value = txt; $('dlg-report').showModal(); $('report-text').select(); }
+  try { navigator.clipboard.writeText(txt).then(function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy report'; }, 1500); }, fallback); } catch (e) { fallback(); }
+};
+var EX = { default: 'ComfyUI default workflow', krea: 'Krea 2 Turbo official template', broken: 'a deliberately broken workflow' };
+function loadExample(k) { run(window.COMFY_SAMPLES[k], k === 'default' ? 'default_workflow.json' : k === 'krea' ? 'image_krea2_turbo_t2i.json' : 'broken_example.json', EX[k]); }
+$('examples').onchange = function (e) { loadExample(e.target.value); };
+loadExample('default');
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { mcache.clear(); if (S.graph) { S.graph._laid = false; layoutGraph(S.graph); } draw(); });
+window.__app = { S: S, run: run, focusNode: focusNode, enter: enter };
+})();
+</script>
+</body>
+</html>
