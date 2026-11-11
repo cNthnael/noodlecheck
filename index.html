@@ -170,7 +170,7 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
 <script src="samples.js"></script>
 <script src="engine.js"></script>
 <script>
-// app.js v1.2 - 2026-11-11 10:45 WIB (v1.2: enter-subgraph button on nodes, Esc to go back, view restored on return) : canvas renderer (ComfyUI default dark palette) + side panel
+// app.js v1.3 - 2026-11-11 10:55 WIB (v1.2: enter-subgraph button on nodes, Esc to go back, view restored on return) : canvas renderer (ComfyUI default dark palette) + side panel
 (function () {
 'use strict';
 var C = window.ComfyCheck, D = C.data;
@@ -418,6 +418,8 @@ function draw() {
       ctx.font = '10px ' + F; var bt = clipText(bi, Math.max(40, fullW - 20), '10px ' + F), bw = ctx.measureText(bt).width + 12;
       rr(L.x + fullW - bw, top - 18, bw, 15, 4); ctx.fillStyle = LG.BADGE_BG; ctx.fill(); ctx.fillStyle = '#FFF'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(bt, L.x + fullW - bw / 2, top - 10);
     }
+    var ins = !mark && S.inside ? S.inside.get(G.id + '|' + n.key) : null;
+    if (ins) { ctx.save(); ctx.setLineDash([10 / Math.max(s, 0.4), 7 / Math.max(s, 0.4)]); rr(L.x - 3, top - 3, fullW + 6, fullH + 6, LG.R + 3); ctx.lineWidth = Math.max(2, 2 / s); ctx.strokeStyle = ins.level === 'error' ? LG.ERR : '#FFA931'; ctx.stroke(); ctx.restore(); }
     if (mark || selected) {
       rr(L.x - 3, top - 3, fullW + 6, fullH + 6, LG.R + 3); ctx.lineWidth = Math.max(2, 2 / s);
       ctx.strokeStyle = selected ? '#FFF' : mark === 'error' ? LG.ERR : '#FFA931'; ctx.stroke();
@@ -459,9 +461,14 @@ function showGraph(G, keepView) { S.graph = G; S.hoverSub = null; layoutGraph(G)
 function saveView() { if (S.graph) S.graph._view = { scale: S.scale, ox: S.ox, oy: S.oy, auto: S.auto }; }
 function enter(subId) { var G = S.L.subs.get(subId); if (!G || G === S.graph || S.stack.indexOf(G) >= 0) return; saveView(); S.stack.push(S.graph); select(null); showGraph(G); }
 function back(toIndex) { var G = S.stack[toIndex]; S.stack = S.stack.slice(0, toIndex); select(null); showGraph(G, true); }
+function pathTo(target) { // chain of parent graphs from the root down to the graph that holds a node
+  var found = null;
+  (function walk(G, trail, depth) { if (found || depth > 8) return; if (G === target) { found = trail; return; } G.nodes.forEach(function (n) { var sg = S.L.subs.get(n.type); if (sg && trail.indexOf(sg) < 0 && sg !== G) walk(sg, trail.concat([G]), depth + 1); }); })(S.L.root, [], 0);
+  return found;
+}
 function focusNode(graphId, key) {
   var G = graphId === 'root' ? S.L.root : S.L.subs.get(graphId); if (!G) return;
-  if (S.graph !== G) { if (G === S.L.root) S.stack = []; else if (S.stack.indexOf(G) >= 0) S.stack = S.stack.slice(0, S.stack.indexOf(G)); else S.stack.push(S.graph); S.graph = G; layoutGraph(G); crumbs(); legend(); }
+  if (S.graph !== G) { saveView(); S.stack = pathTo(G) || []; S.graph = G; S.hoverSub = null; layoutGraph(G); crumbs(); legend(); }
   var n = G.byId.get(key); if (!n) { fit(); return; }
   var L = n._L, W = stage.clientWidth, H = stage.clientHeight;
   S.scale = Math.max(0.35, Math.min(1, Math.min((W - 120) / Math.max(L.w, 1), (H - 160) / Math.max(L.h + 30, 1))));
@@ -503,6 +510,9 @@ function select(sel) {
   C.widgetRows(n).slice(0, 24).forEach(function (r, i) { row(r.name || 'value ' + (i + 1), fmt(r.value).slice(0, 400)); });
   box.appendChild(dl);
   S.A.issues.filter(function (i) { return i.graphId === G.id && i.nodeKey === n.key; }).forEach(function (i) { box.appendChild(el('p', { class: 'sub', style: 'margin:8px 0 0;color:' + (i.level === 'error' ? 'var(--err)' : i.level === 'warning' ? 'var(--warn)' : 'var(--note)'), text: i.title })); });
+  var insd = S.inside && S.inside.get(G.id + '|' + n.key);
+  if (insd) { box.appendChild(el('p', { class: 'sub', style: 'margin:8px 0 0;color:' + (insd.level === 'error' ? 'var(--err)' : 'var(--warn)'), text: 'Problem inside this subgraph: ' + insd.issue.title }));
+    box.appendChild(el('div', { class: 'links' }, el('button', { class: 'btn small', type: 'button', text: 'Show the node inside', on: { click: function () { focusNode(insd.issue.graphId, insd.issue.nodeKey); } } }))); }
   if (isSub) box.appendChild(el('div', { class: 'links' }, el('button', { class: 'btn small', type: 'button', text: 'Open subgraph', on: { click: function () { enter(n.type); } } })));
   box.style.display = 'block'; $('legend').style.display = 'none'; draw();
 }
@@ -588,9 +598,19 @@ function panel() {
 function footer(p) {
   p.appendChild(el('section', { class: 'foot' },
     el('p', { text: 'Checked against ComfyUI core ' + D.coreVersion + ' (' + Object.keys(D.core).length.toLocaleString('en-US') + ' node types) and the ComfyUI-Manager catalogue (' + D.packs.length.toLocaleString('en-US') + ' packs, ' + Object.keys(D.models).length + ' model links), snapshot ' + D.built + '. Newer nodes may show as unknown.' }),
+    sourcesList(),
     el('p', { text: 'Your file is read in this browser tab and is not uploaded anywhere.' }),
     el('div', { class: 'links' }, el('button', { class: 'btn small', type: 'button', id: 'btn-cat', text: D.live ? 'Catalogue updated' : 'Update node catalogue (about 5 MB)', on: { click: updateCatalogue } })),
     el('p', { id: 'cat-msg', style: 'margin-top:6px', text: '' })));
+}
+function sourcesList() {
+  var box = el('dl', { class: 'kv', style: 'margin:0 0 10px' });
+  (D.sources || []).forEach(function (x) {
+    var live = D.live && x.name === 'ComfyUI-Manager';
+    var dt = el('dt'), a = safeLink(x.repo, x.name); dt.appendChild(a || document.createTextNode(x.name)); box.appendChild(dt);
+    box.appendChild(el('dd', { text: live ? 'main, live ' + D.built.replace(' (live)', '') : (/^\d/.test(x.version) ? 'v' + x.version : x.version) + ' @ ' + x.commit.slice(0, 7) + ' (' + x.date + ')' }));
+  });
+  return box;
 }
 var RAW = 'https://raw.githubusercontent.com/Comfy-Org/ComfyUI-Manager/main/';
 function updateCatalogue() {
@@ -607,8 +627,13 @@ function run(text, name, example) {
   S.L = C.load(text); S.A = C.analyze(S.L); S.name = name; S.example = example || null; S.stack = []; S.sel = null; S.marks = new Map(); instIndex = new Map(); mcache.clear();
   (S.A.inst || []).forEach(function (x) { instIndex.set(x.graph.id + '|' + x.node.key, x); });
   S.A.issues.forEach(function (i) { if (!i.nodeKey || i.level === 'note') return; var k = i.graphId + '|' + i.nodeKey; if (S.marks.get(k) !== 'error') S.marks.set(k, i.level); });
-  // mark the subgraph node at root when an issue lives inside it
-  if (S.L.ok) S.A.issues.forEach(function (i) { if (i.level === 'note' || !i.graphId || i.graphId === 'root') return; S.L.root.nodes.forEach(function (n) { if (n.type === i.graphId) { var k = 'root|' + n.key; if (S.marks.get(k) !== 'error') S.marks.set(k, i.level); } }); });
+  // a subgraph node that contains a problem gets a dashed outline; the node that causes it gets the solid one
+  S.inside = new Map();
+  if (S.L.ok) {
+    var all = [S.L.root]; S.L.subs.forEach(function (g) { all.push(g); });
+    var up = function (gid, issue, depth) { if (depth > 6) return; all.forEach(function (G2) { G2.nodes.forEach(function (n) { if (n.type !== gid) return; var k = G2.id + '|' + n.key, cur = S.inside.get(k); if (!cur || (cur.level !== 'error' && issue.level === 'error')) S.inside.set(k, { level: issue.level, issue: issue }); if (G2.id !== 'root') up(G2.id, issue, depth + 1); }); }); };
+    S.A.issues.forEach(function (i) { if (i.level !== 'note' && i.nodeKey && i.graphId && i.graphId !== 'root') up(i.graphId, i, 0); });
+  }
   $('inspector').style.display = 'none';
   if (S.L.ok) showGraph(S.L.root); else { S.graph = null; $('legend').style.display = 'none'; crumbs(); draw(); }
   panel(); $('panel').scrollTop = 0;

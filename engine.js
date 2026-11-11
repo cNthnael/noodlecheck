@@ -1,4 +1,4 @@
-// engine.js v1.1 - 2026-11-11 10:25 WIB (v1.1: fuzzy + prefix custom node detective, live catalogue update)
+// engine.js v1.2 - 2026-11-11 10:55 WIB (v1.2: loop check follows cables through subgraphs port by port) (v1.1: fuzzy + prefix custom node detective, live catalogue update)
 // Workflow parsing + static analysis for the ComfyUI Workflow Checker. No DOM access in this file.
 (function (root) {
   'use strict';
@@ -268,6 +268,32 @@
       if (G.isSub && Number(l.o) === -10) return l;
       return G.byId.has(K(l.o)) ? l : null;
     }
+    // which inputs each output of a subgraph really depends on, so a cable that leaves a subgraph and
+    // comes back into a different, unrelated input is not mistaken for a loop
+    var subDeps = new Map();
+    function depsOf(G, seen) {
+      if (subDeps.has(G.id)) return subDeps.get(G.id);
+      seen = seen || {}; if (seen[G.id] || !G.io) return []; seen[G.id] = 1;
+      var res = [];
+      G.io.outputs.forEach(function (_, j) {
+        var names = new Set(), visited = new Set(), st = [];
+        G.links.forEach(function (l) { if (Number(l.t) === -20 && Number(l.ts) === j) st.push([K(l.o), Number(l.os)]); });
+        while (st.length) {
+          var cur = st.pop();
+          if (cur[0] === '-10') { var io = G.io.inputs[cur[1]]; if (io) names.add(io.name); continue; }
+          var n = G.byId.get(cur[0]); if (!n) continue;
+          var vk = subs.has(n.type) ? cur[0] + '|' + cur[1] : cur[0]; if (visited.has(vk)) continue; visited.add(vk);
+          relevantInputs(n, cur[1], seen).forEach(function (inp) { var l = validLink(G, inp); if (l) st.push([K(l.o), Number(l.os)]); });
+        }
+        res[j] = names;
+      });
+      delete seen[G.id]; subDeps.set(G.id, res); return res;
+    }
+    function relevantInputs(n, outSlot, seen) {
+      if (!subs.has(n.type)) return n.inputs;
+      var d = depsOf(subs.get(n.type), seen)[outSlot];
+      return d ? n.inputs.filter(function (i) { return d.has(i.name); }) : n.inputs;
+    }
     function computeNeed(G, seed, depth) {
       // seed: null for root; otherwise 'req' | 'cond' | 'off' inherited from the parent subgraph node
       var need = new Map(), queue = [];
@@ -336,16 +362,18 @@
       });
       if (broken) issue('warning', broken + ' broken cable' + (broken > 1 ? 's' : '') + where, 'Some inputs point at a cable or node that is not in the file. ComfyUI drops these on load, so the inputs end up unconnected.', firstBroken, G);
       if (mism) issue('warning', mism + ' cable' + (mism > 1 ? 's connect' : ' connects') + ' mismatched types' + where, 'For example: ' + mismTxt + '. ComfyUI will refuse to run this connection.', firstMism, G);
-      // cycles
+      // cycles (port-aware through subgraph nodes)
       var state = {}, cyc = null;
-      function dfs(key) {
-        if (cyc) return; state[key] = 1;
-        var n = G.byId.get(key);
-        n.inputs.forEach(function (inp) { var l = validLink(G, inp); if (!l || Number(l.o) === -10 || cyc) return; var ok = K(l.o); if (state[ok] === 1) cyc = n; else if (!state[ok]) dfs(ok); });
-        state[key] = 2;
+      function dfs(key, slot) {
+        var n = G.byId.get(key); if (!n || cyc) return;
+        var sk = subs.has(n.type) ? key + '|' + slot : key;
+        if (state[sk] === 2) return; if (state[sk] === 1) { cyc = n; return; }
+        state[sk] = 1;
+        relevantInputs(n, slot).forEach(function (inp) { if (cyc) return; var l = validLink(G, inp); if (!l || Number(l.o) === -10) return; dfs(K(l.o), Number(l.os)); });
+        state[sk] = 2;
       }
-      try { G.nodes.forEach(function (n) { if (!state[n.key]) dfs(n.key); }); } catch (e) { /* very deep graph */ }
-      if (cyc) issue('error', 'Cables form a loop' + where, 'A node depends on its own output. ComfyUI cannot order the nodes for execution.', cyc, G);
+      try { G.nodes.forEach(function (n) { if (subs.has(n.type)) n.outputs.forEach(function (_, j) { dfs(n.key, j); }); else dfs(n.key, 0); }); } catch (e) { cyc = null; }
+      if (cyc) issue('error', 'Cables form a loop' + where, 'Following the cables backwards from "' + (cyc.title || (D.core[cyc.type] && D.core[cyc.type].d) || (subs.has(cyc.type) ? subs.get(cyc.type).name : cyc.type)) + '" leads back to itself, so ComfyUI cannot order the nodes for execution.', cyc, G);
     });
 
     // --- node sources, required inputs ---

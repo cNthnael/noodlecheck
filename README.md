@@ -69,7 +69,7 @@ It runs entirely in the browser. **Your workflow file is never uploaded.**
 | 📦 | **Model list** | Every model file with its category, target folder, Required or Optional, and a download or search link. |
 | 🔌 | **Custom node list** | Every node pack with the node types it provides, Required or Optional, and its repository link. |
 | 🔍 | **Custom node detective** | Finds the pack behind a node from its metadata, the ComfyUI-Manager catalogue, near-identical names or name prefixes, with a live catalogue update. |
-| 🚦 | **Verdict** | READY, WARNING or ERROR, with each issue linked to the node that caused it. |
+| 🚦 | **Verdict** | READY, WARNING or ERROR, with each issue linked to the node that caused it, even when that node sits inside a subgraph: the parent gets a dashed outline, the culprit a solid one, and **Show node** jumps straight to it. |
 | 🖼️ | **PNG metadata** | Drop an image saved by ComfyUI and the embedded workflow is read straight from it. |
 | 📋 | **Copy report** | One click copies the whole analysis as plain text. |
 | 🔒 | **Private by design** | No server, no account, no upload. Parsing happens in your tab. |
@@ -196,10 +196,20 @@ noodlecheck/
 
 ## 🗓️ Data snapshot
 
-NoodleCheck ships with a snapshot in `data.js`. The node pack catalogue can be refreshed from the page with **Update node catalogue**; the ComfyUI core node list only changes with a new release of this site.
+The live NoodleCheck is built from these exact versions. The same list is shown at the bottom of the side panel on the site.
 
-| Source | Snapshot |
-|---|---|
+| Source | Version | Commit | Date | Used for |
+|---|---|---|---|---|
+| [ComfyUI](https://github.com/comfyanonymous/ComfyUI) | v0.45.0 | [`0228a9d`](https://github.com/comfyanonymous/ComfyUI/commit/0228a9d73cd7c2daf8f61fe13d56b12efe307171) | 2026-11-10 | Core node definitions, required inputs, model folders, default workflow |
+| [ComfyUI_frontend](https://github.com/Comfy-Org/ComfyUI_frontend) | v1.61.0 | [`9b1cc7d`](https://github.com/Comfy-Org/ComfyUI_frontend/commit/9b1cc7d55833f614e24b429d2d44a3b7c19eb0d4) | 2026-11-11 | Dark palette, cable colours, node dimensions |
+| [ComfyUI-Manager](https://github.com/Comfy-Org/ComfyUI-Manager) | `main` | [`15e49ea`](https://github.com/Comfy-Org/ComfyUI-Manager/commit/15e49ea544a4b20627c2eec01341843e8c4b6d49) | 2026-11-11 | Node-to-pack map, node pack catalogue, model list |
+| [workflow_templates](https://github.com/Comfy-Org/workflow_templates) | `main` | [`26ada70`](https://github.com/Comfy-Org/workflow_templates/commit/26ada70e3eb4d900c023285fe88edd3985ecb8b7) | 2026-11-10 | Model download links, Krea 2 Turbo example, test set |
+
+What that adds up to: **1,020** core node types, **5,720** node packs, **42,491** custom node names and **857** model links. Snapshot built **2026-11-11**.
+
+The node pack catalogue can be refreshed from the page with **Update node catalogue**, which pulls the current `main` of ComfyUI-Manager. The ComfyUI core node list only changes with a new release of this site.
+
+---|---|
 | ComfyUI core | **0.45.0** · 1,020 node types |
 | ComfyUI-Manager catalogue | 5,720 node packs · 857 model links |
 | Snapshot date | **2026-11-11** |
