@@ -209,6 +209,11 @@ What that adds up to: **1,020** core node types, **5,720** node packs, **42,491*
 
 The node pack catalogue can be refreshed from the page with **Update node catalogue**, which pulls the current `main` of ComfyUI-Manager. The ComfyUI core node list only changes with a new release of this site.
 
+---|---|
+| ComfyUI core | **0.45.0** · 1,020 node types |
+| ComfyUI-Manager catalogue | 5,720 node packs · 857 model links |
+| Snapshot date | **2026-11-11** |
+
 ---
 
 ## ❓ FAQ

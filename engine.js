@@ -1,8 +1,8 @@
-// engine.js v1.2 - 2026-11-11 10:55 WIB (v1.2: loop check follows cables through subgraphs port by port) (v1.1: fuzzy + prefix custom node detective, live catalogue update)
+// engine.js v1.4 - 2026-11-12 08:20 WIB (v1.4: MiniMax H3 family) (v1.3: matches packs by the Manager nodename_pattern, e.g. rgthree) (v1.2: loop check follows cables through subgraphs port by port) (v1.1: fuzzy + prefix custom node detective, live catalogue update)
 // Workflow parsing + static analysis for the ComfyUI Workflow Checker. No DOM access in this file.
 (function (root) {
   'use strict';
-  var D = root.COMFY_DATA || { core: {}, packs: [], nodeMap: {}, models: {}, coreVersion: '?' };
+  var D = root.COMFY_DATA || { core: {}, packs: [], nodeMap: {}, patterns: [], models: {}, coreVersion: '?' };
   var FRONTEND = { Note: 1, MarkdownNote: 1, PrimitiveNode: 1, Reroute: 1 };
   var WTYPES = { INT: 1, FLOAT: 1, STRING: 1, BOOLEAN: 1, COMBO: 1, SAMPLERS: 1, SCHEDULERS: 1 };
   var SOCKETS = { MODEL: 1, CLIP: 1, VAE: 1, CONDITIONING: 1, LATENT: 1, IMAGE: 1, MASK: 1, CONTROL_NET: 1, CLIP_VISION: 1,
@@ -207,6 +207,13 @@
   }
 
   // ---------- custom node detective ----------
+  // some packs (rgthree, ...) register nodes the Manager cannot list; it gives a name pattern instead
+  var patRe = null;
+  function byPattern(t) {
+    if (!patRe) patRe = (D.patterns || []).map(function (e) { try { return [new RegExp(e[0]), e[1]]; } catch (x) { return null; } }).filter(Boolean);
+    var out = []; patRe.forEach(function (e) { if (e[0].test(String(t))) out.push(e[1]); });
+    return out.length ? out : null;
+  }
   var normIndex = null;
   function normName(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
   function buildIndex() { normIndex = {}; for (var k in D.nodeMap) { var n = normName(k); if (n && !normIndex[n]) normIndex[n] = k; } }
@@ -236,16 +243,17 @@
   }
   // rebuild the pack catalogue from freshly downloaded ComfyUI-Manager files
   function setCatalogue(extMap, nodeList, stamp) {
-    var meta = {}, packs = [], nm = {};
+    var meta = {}, packs = [], nm = {}, pats = [];
     (nodeList.custom_nodes || []).forEach(function (c, i) { (c.files || []).concat([c.reference || '']).forEach(function (f) { f = String(f).replace(/\/$/, ''); if (!(f in meta)) meta[f] = [i, c]; }); });
     Object.keys(extMap).forEach(function (url) {
       var m = meta[url.replace(/\/$/, '')]; if (!m) return;
       var idx = packs.length; packs.push([m[1].reference || url, m[1].title || '', m[1].id || '', m[0]]);
+      if (m[1].nodename_pattern) pats.push([m[1].nodename_pattern, idx]);
       (extMap[url][0] || []).forEach(function (n) { if (!D.core[n]) (nm[n] = nm[n] || []).push(idx); });
     });
     Object.keys(nm).forEach(function (n) { nm[n] = nm[n].filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return packs[a][3] - packs[b][3]; }).slice(0, 6); });
     if (packs.length < 1000) throw new Error('catalogue looks incomplete');
-    D.packs = packs.map(function (p) { return p.slice(0, 3); }); D.nodeMap = nm; D.built = stamp; D.live = true; normIndex = null;
+    D.packs = packs.map(function (p) { return p.slice(0, 3); }); D.nodeMap = nm; D.patterns = pats; patRe = null; D.built = stamp; D.live = true; normIndex = null;
     return { packs: packs.length, names: Object.keys(nm).length };
   }
 
@@ -425,10 +433,10 @@
     });
     // resolve remaining types through the ComfyUI-Manager node map (pick the pack that explains most of them)
     var votes = {}, possible = {};
-    unresolved.forEach(function (list, t) { (D.nodeMap[t] || D.nodeMap[t.trim()] || []).forEach(function (i) { votes[i] = (votes[i] || 0) + 1; }); });
+    unresolved.forEach(function (list, t) { (D.nodeMap[t] || D.nodeMap[t.trim()] || byPattern(t) || []).forEach(function (i) { votes[i] = (votes[i] || 0) + 1; }); });
     packs.forEach(function (p) { for (var i = 0; i < D.packs.length; i++) if (D.packs[i][0] === p.url) votes[i] = (votes[i] || 0) + 100; });
     unresolved.forEach(function (list, t) {
-      var c = D.nodeMap[t] || D.nodeMap[t.trim()], fuzzy = null;
+      var c = D.nodeMap[t] || D.nodeMap[t.trim()] || byPattern(t), fuzzy = null;
       if (!c || !c.length) {
         var det = detect(t);
         if (det && det.exactish) { c = det.packs; fuzzy = det.exactish; }
@@ -529,7 +537,7 @@
   // ---------- what kind of workflow is it ----------
   var FAMILIES = [['Krea 2', /krea[-_ ]?2/], ['FLUX.2', /flux[-_. ]?2/], ['FLUX.1 Kontext', /kontext/], ['FLUX.1 Krea', /flux.*krea/], ['FLUX.1', /flux/],
     ['Z-Image', /z[-_ ]?image/], ['Qwen-Image Edit', /qwen[-_ ]?image[-_ ]?edit/], ['Qwen-Image', /qwen[-_ ]?image/], ['Wan 2.2', /wan[-_ ]?2[._]?2/],
-    ['Wan 2.1', /wan[-_ ]?2[._]?1/], ['Wan', /(^|[^a-z])wan[^a-z]/], ['LTX Video', /ltx/], ['HunyuanVideo', /hunyuan[-_ ]?video|hyvid|hunyuanvideo/],
+    ['Wan 2.1', /wan[-_ ]?2[._]?1/], ['Wan', /(^|[^a-z])wan[^a-z]/], ['MiniMax H3', /minimax[-_ ]?h3|(^|[^a-z0-9])h3[-_ ]/], ['LTX Video', /ltx/], ['HunyuanVideo', /hunyuan[-_ ]?video|hyvid|hunyuanvideo/],
     ['Hunyuan3D', /hunyuan[-_ ]?3d/], ['HunyuanImage', /hunyuan[-_ ]?image/], ['Stable Diffusion 3.5', /sd[-_ ]?3\.?5/], ['Stable Diffusion 3', /sd[-_ ]?3|stable[-_ ]?diffusion[-_ ]?3/],
     ['Stable Cascade', /cascade/], ['Stable Video Diffusion', /svd/],
     ['Stable Audio', /stable[-_ ]?audio/], ['ACE-Step', /ace[-_ ]?step/], ['HiDream', /hidream/], ['Chroma', /chroma/], ['Cosmos', /cosmos/],
@@ -549,6 +557,9 @@
     var fams = [];
     function famOf(str) { for (var i = 0; i < FAMILIES.length; i++) if (FAMILIES[i][1].test(' ' + str + ' ')) return FAMILIES[i][0]; return null; }
     main.forEach(function (m) { var f = famOf(m.base.toLowerCase()); if (f && fams.indexOf(f) < 0) fams.push(f); });
+    // the main model can sit in an unusual folder (e.g. a merged H3 checkpoint), so also look at every active model and node name
+    var h3 = models.some(function (m) { return m.need !== 'off' && m.need !== 'unused' && /minimax[-_ ]?h3|(^|[^a-z0-9])h3[-_ ]/.test(m.base.toLowerCase()); }) || has(/MiniMaxH3|^H3[A-Z]|^PK_MiniMaxH3/);
+    if (h3 && fams.indexOf('MiniMax H3') < 0) fams.unshift('MiniMax H3');
     if (!fams.length) { var f0 = famOf(clipTypes.join(' ').toLowerCase()) || (main.length ? null : famOf(models.map(function (m) { return m.base.toLowerCase(); }).join(' | '))); if (f0) fams.push(f0); }
     if (has(/^ADE_|AnimateDiff/)) fams = ['AnimateDiff'];
     var family = fams.length ? fams.slice(0, 2).join(' + ') : null;
