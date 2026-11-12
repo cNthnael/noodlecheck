@@ -98,6 +98,8 @@ ul.list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;ga
 .lvl{flex:none;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:1px 6px;border-radius:3px;border:1px solid currentColor}
 .lvl.error{color:var(--err)} .lvl.warning{color:var(--warn)} .lvl.note{color:var(--note)}
 .lvl.req{color:var(--fg);background:rgba(255,255,255,.08)} .lvl.opt{color:var(--muted)}
+.conf{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:0 5px;border-radius:3px;border:1px solid currentColor;margin-right:6px}
+.conf.found{color:#7fd18a} .conf.likely{color:var(--warn)} .conf.none{color:var(--muted)}
 .cat{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
 .file{font-family:var(--font-mono);font-size:12.5px;color:var(--fg);overflow-wrap:anywhere}
 .links{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;font-size:12.5px}
@@ -168,10 +170,12 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
 </dialog>
 
 <script src="data.js"></script>
+<script src="models-extra.js"></script>
+<script src="community-models.js"></script>
 <script src="samples.js"></script>
 <script src="engine.js"></script>
 <script>
-// app.js v1.5 - 2026-11-12 08:45 WIB (v1.5: hint shows the shortened search words) (v1.4: safeLink rewrites civitai.com to civitai.red) (v1.3 2026-11-11 10:55: pinned versions footer) (v1.2: enter-subgraph button on nodes, Esc to go back, view restored on return) : canvas renderer (ComfyUI default dark palette) + side panel
+// app.js v1.6 - 2026-11-12 09:00 WIB (v1.6: model rows show Found/Likely badge, size, format and where the link came from; author's repo links on packs) (v1.5: hint shows the shortened search words) (v1.4: safeLink rewrites civitai.com to civitai.red) (v1.3 2026-11-11 10:55: pinned versions footer) (v1.2: enter-subgraph button on nodes, Esc to go back, view restored on return) : canvas renderer (ComfyUI default dark palette) + side panel
 (function () {
 'use strict';
 var C = window.ComfyCheck, D = C.data;
@@ -555,10 +559,13 @@ function panel() {
     var isReq = m.need === 'req', li = el('li', { class: 'item ' + (isReq ? 'req' : 'opt') }, el('div', { class: 'cat', text: m.catLabel }),
       el('div', { class: 'top' }, el('span', { class: 'file', text: m.name }), el('span', { class: 'lvl ' + (isReq ? 'req' : 'opt'), text: isReq ? 'Required' : 'Optional' })),
       el('p', { class: 'm', text: C.needWhy(m.need, m.modifier) + ' Goes in ' + m.folder + '.' }));
+    var facts = [m.size ? (m.sizeFrom ? '\u2248 ' : '') + m.size : '', m.format, m.baseModel].filter(Boolean).join(' \u00b7 ');
+    var CONF = { found: 'Found', likely: 'Likely' };
+    li.appendChild(el('p', { class: 'm' }, el('span', { class: 'conf ' + (m.conf || 'none'), text: CONF[m.conf] || 'Not identified' }), document.createTextNode(facts)));
     var lk = el('div', { class: 'links' }); m.links.forEach(function (l) { var a = safeLink(l.href, l.label); if (a) lk.appendChild(a); });
     if (m.users[0]) lk.appendChild(locate(m.users[0].graphId, m.users[0].nodeKey, 'Show loader'));
     li.appendChild(lk);
-    if (!m.exact) li.appendChild(el('p', { class: 'm', text: 'No source is recorded in the workflow or the catalogue, so these are searches by the first words of the file name' + (m.query ? ' (\u201c' + m.query + '\u201d).' : '.') }));
+    li.appendChild(el('p', { class: 'm', text: m.exact ? m.how + (m.sizeFrom ? ' Size is read from the file name.' : m.size ? '' : ' File size is not recorded.') : 'No source is recorded in the workflow, its notes or the catalogue, so these are searches by the first words of the file name' + (m.query ? ' (\u201c' + m.query + '\u201d).' : '.') }));
     um.appendChild(li); }); sm.appendChild(um); }
   p.appendChild(sm);
   // custom nodes
@@ -574,8 +581,11 @@ function panel() {
       el('p', { class: 'm mono', text: types.slice(0, 6).join(', ') + (types.length > 6 ? ' +' + (types.length - 6) + ' more' : '') }));
     var lk = el('div', { class: 'links' }), a = pk.url && safeLink(pk.url, /github\.com/.test(pk.url) ? 'GitHub repository' : 'Repository'), r = pk.registry && safeLink(pk.registry, 'Comfy Registry');
     if (a) lk.appendChild(a); if (r) lk.appendChild(r);
+    var na = pk.noteUrl && safeLink(pk.noteUrl, 'Author\u2019s link'); if (na) lk.appendChild(na);
     var first = A.inst.filter(function (x) { return x.pack === pk; })[0]; if (first) lk.appendChild(locate(first.graph.id, first.node.key, 'Show a node'));
     li.appendChild(lk);
+    if (pk.fromNote) li.appendChild(el('p', { class: 'm', text: 'Repository taken from the author\u2019s note in this workflow.' }));
+    if (pk.noteUrl) li.appendChild(el('p', { class: 'm', text: 'The author\u2019s note links a different repository for this pack than the catalogue does. Prefer the author\u2019s link if they disagree.' }));
     if (pk.fuzzy) li.appendChild(el('p', { class: 'm', text: 'Matched by a near-identical node name: ' + pk.fuzzy.slice(0, 3).join(', ') + '.' }));
     if (pk.guessed) li.appendChild(el('p', { class: 'm', text: 'The file does not name the pack. This is the best match from the ComfyUI-Manager catalogue' + (pk.alt ? '; ' + pk.alt + ' other pack' + (pk.alt > 1 ? 's define' : ' defines') + ' nodes with the same names.' : '.') }));
     up2.appendChild(li);

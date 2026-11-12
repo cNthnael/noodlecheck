@@ -1,4 +1,4 @@
-// engine.js v1.6 - 2026-11-12 08:45 WIB (v1.6: model searches use the first words of the file name + web search link) (v1.5: Civitai search link uses civitai.red) (v1.4: MiniMax H3 family) (v1.3: matches packs by the Manager nodename_pattern, e.g. rgthree) (v1.2: loop check follows cables through subgraphs port by port) (v1.1: fuzzy + prefix custom node detective, live catalogue update)
+// engine.js v1.7 - 2026-11-12 09:00 WIB (v1.7: model lookup chain: workflow, author notes, catalogue, community list, searches; size + format) (v1.6: model searches use the first words of the file name + web search link) (v1.5: Civitai search link uses civitai.red) (v1.4: MiniMax H3 family) (v1.3: matches packs by the Manager nodename_pattern, e.g. rgthree) (v1.2: loop check follows cables through subgraphs port by port) (v1.1: fuzzy + prefix custom node detective, live catalogue update)
 // Workflow parsing + static analysis for the ComfyUI Workflow Checker. No DOM access in this file.
 (function (root) {
   'use strict';
@@ -13,7 +13,7 @@
     style_models: 'Style model', embeddings: 'Embedding', vae_approx: 'Preview VAE (TAESD)', model_patches: 'Model patch',
     latent_upscale_models: 'Latent upscale model', audio_encoders: 'Audio encoder', ipadapter: 'IP-Adapter', sams: 'Segment Anything',
     ultralytics: 'Detector (Ultralytics)', hypernetworks: 'Hypernetwork', gligen: 'GLIGEN', photomaker: 'PhotoMaker',
-    animatediff_models: 'AnimateDiff motion model', insightface: 'InsightFace', other: 'Other model file' };
+    animatediff_models: 'AnimateDiff motion model', insightface: 'InsightFace', frame_interpolation: 'Frame interpolation model', other: 'Other model file' };
   var CAT_ORDER = ['checkpoints', 'diffusion_models', 'text_encoders', 'vae', 'loras', 'controlnet', 'model_patches', 'clip_vision',
     'style_models', 'ipadapter', 'upscale_models', 'latent_upscale_models', 'audio_encoders', 'embeddings', 'vae_approx'];
 
@@ -191,28 +191,87 @@
   }
   function base(n) { return String(n).split(/[\\/]/).pop(); }
   function hfRepo(url) { var m = /^https?:\/\/huggingface\.co\/([^/]+\/[^/]+)\/(?:resolve|blob)\//.exec(url || ''); return m ? 'https://huggingface.co/' + m[1] : null; }
+  // ---------- model lookup chain: workflow -> author's notes -> catalogue -> community list -> searches ----------
+  function norm(x) { return String(x).toLowerCase().replace(MODEL_EXT, '').replace(/[^a-z0-9]/g, ''); }
+  function toks(x) { return String(x).toLowerCase().replace(MODEL_EXT, '').split(/[^a-z0-9]+/).filter(Boolean); }
+  var URL_DIRS = { vae: 'vae', vae_approx: 'vae_approx', text_encoders: 'text_encoders', text_encoder: 'text_encoders', clip: 'text_encoders', loras: 'loras', lora: 'loras',
+    diffusion_models: 'diffusion_models', unet: 'diffusion_models', checkpoints: 'checkpoints', upscale_models: 'upscale_models', latent_upscale_models: 'latent_upscale_models',
+    frame_interpolation: 'frame_interpolation', clip_vision: 'clip_vision', controlnet: 'controlnet', embeddings: 'embeddings' };
+  function dirFromUrl(u) { var parts = String(u).split(/[?#]/)[0].split('/'); for (var i = parts.length - 2; i > 2; i--) if (URL_DIRS[parts[i]]) return URL_DIRS[parts[i]]; return ''; }
+  // every link an author wrote in a Note / MarkdownNote node
+  function noteLinks(L) {
+    var out = [], seen = {};
+    function add(text, url) { url = String(url).replace(/[\s)>.,]+$/, ''); if (!/^https:\/\//i.test(url) || seen[url]) return; seen[url] = 1;
+      var file = ''; try { file = decodeURIComponent(url.split(/[?#]/)[0].split('/').pop()); } catch (e) {}
+      out.push({ text: String(text || '').replace(/\s+/g, ' ').trim(), url: url, file: MODEL_EXT.test(file) ? file : '' }); }
+    function scan(nodes) { (nodes || []).forEach(function (n) {
+      if (!/note/i.test(String(n.type))) return;
+      (n.wv || n.widgets_values || []).forEach(function (v) {
+        if (typeof v !== 'string') return; var m, re = /\[([^\]]*)\]\(\s*(https:\/\/[^\s)]+)\s*\)/g;
+        while ((m = re.exec(v))) add(m[1], m[2]);
+        var re2 = /https:\/\/[^\s)\]"'<>]+/g; while ((m = re2.exec(v))) add('', m[0]);
+      }); }); }
+    try { scan(L.root.nodes); L.subs.forEach(function (G) { scan(G.nodes); }); } catch (e) {}
+    return out;
+  }
+  function fromNotes(b, notes) {
+    var nb = norm(b), exact = null, loose = [], tb = toks(b);
+    notes.forEach(function (l) {
+      var names = [l.file, base(l.text)].filter(Boolean);
+      if (names.some(function (x) { return norm(x) === nb; })) { if (!exact || (l.file && !exact.file)) exact = l; return; }
+      if (tb.length >= 3 && names.some(function (x) { var t = toks(x); return t.length >= tb.length && tb.every(function (w) { return t.indexOf(w) >= 0; }); })) loose.push(l);
+    });
+    if (exact) return { l: exact, conf: 'found' };
+    if (loose.length === 1) return { l: loose[0], conf: 'likely' };
+    return null;
+  }
+  var catIndex = null;
+  function catalogue(b) {
+    if (!catIndex) {
+      catIndex = {};
+      var put = function (k, e) { var n = norm(k); if (n && !catIndex[n]) catIndex[n] = e; };
+      Object.keys(D.models).forEach(function (k) { var v = D.models[k]; put(k, { key: k, url: v[0], dir: v[1], base: v[2] || '', size: v[3] || '', page: '', src: 'catalogue' }); });
+      var X = root.NOODLE_MODELS_EXTRA || {}; Object.keys(X).forEach(function (k) { var v = X[k]; if (Array.isArray(v) && v[0]) put(k, { key: k, url: v[0], dir: v[1] || '', base: v[2] || '', size: v[3] || '', page: v[4] || '', src: 'catalogue' }); });
+      var C = root.NOODLE_COMMUNITY || {}; Object.keys(C).forEach(function (k) { var v = C[k] || {}; if (v.url || v.page) put(k, { key: k, url: v.url || '', dir: v.type || '', base: v.base || '', size: v.size || '', page: v.page || '', src: 'community list' }); });
+    }
+    var e = catIndex[norm(b)]; if (!e) return null;
+    return { e: e, conf: e.key === b ? 'found' : 'likely' };
+  }
+  var QUANT = /(^|[^a-z0-9])(fp8|fp16|fp32|bf16|int4|int8|nf4|q[2-8](_[a-z0-9]+)*)(?![a-z0-9])/i;
+  function fileFormat(b) { var ext = (MODEL_EXT.exec(b) || ['', ''])[1].toLowerCase(), q = QUANT.exec(b.replace(MODEL_EXT, '')); return ext + (q ? ' · ' + q[2].toLowerCase() : ''); }
   var NOISE = /^(v\d+[a-z0-9]*|\d+(\.\d+)?(gb|b|k)|fp(8|16|32)|bf16|int[48]|nf4|q\d.*|e4m3fn|e5m2|scaled|pruned?|prune|convrot|w\d+a\d+|g\d+|safetensors|final|ema|emaonly|half|full|merged?|fixed)$/i;
   function looseQuery(stem) {
     var words = stem.replace(/(\d)\.(\d)/g, '$1$2').replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean), out = [];
     for (var i = 0; i < words.length && out.length < 3; i++) { if (NOISE.test(words[i])) { if (out.length) break; else continue; } out.push(words[i].toLowerCase()); }
     return out.length ? out.join(' ') : stem;
   }
-  function modelLinks(name, known, cat) {
-    var b = base(name), k = known[b] || known[name] || (D.models[b] ? { url: D.models[b][0], dir: D.models[b][1], src: 'catalogue' } : null), links = [];
-    if (k && k.url) {
-      var repo = hfRepo(k.url);
-      if (repo) links.push({ label: 'Model page', href: repo });
-      links.push({ label: 'Download file', href: k.url });
-      return { links: links, exact: true, src: k.src || 'workflow', dir: k.dir };
+  function pageOf(url) { return hfRepo(url) || null; }
+  function modelLinks(name, known, cat, notes) {
+    var b = base(name), links = [], k = known[b] || known[name], r = { links: links, exact: false, conf: null, src: null, size: '', dir: '', base: '' };
+    function direct(url, page, how) {
+      page = page || pageOf(url);
+      if (/^https:\/\/huggingface\.co\/[^/]+\/[^/]+\/blob\//.test(url || '')) url = url.replace('/blob/', '/resolve/');
+      if (page && page !== url) links.push({ label: 'Model page', href: page });
+      if (url) links.push({ label: /\.(safetensors|sft|ckpt|pt|pth|bin|gguf|onnx)(\?|$)/i.test(url) || /\/api\/download\//.test(url) ? 'Download file' : 'Open link', href: url });
+      r.exact = true; r.how = how;
     }
-    // Hugging Face and Civitai index model names, not file names, so the full file name finds nothing:
-    // search with the first few meaningful words instead (dasiwa_minimax_h3_ref2va_v4_pruned_turbo_int8 -> "dasiwa minimax h3")
+    // 1 saved in the workflow by ComfyUI
+    if (k && k.url) { direct(k.url, null, 'Link saved in the workflow.'); r.conf = 'found'; r.src = k.src || 'workflow'; r.dir = k.dir; return r; }
+    // 2 written by the author in a note
+    var n = fromNotes(b, notes || []);
+    if (n) { direct(n.l.url, null, n.conf === 'found' ? 'Link from the author’s note in this workflow.' : 'The author’s note links a file with a very similar name' + (n.l.file ? ' (' + n.l.file + ')' : '') + '. Check it is the one you need.');
+      r.conf = n.conf; r.src = 'note'; r.dir = dirFromUrl(n.l.url); var c0 = catalogue(n.l.file || b); if (c0) r.size = c0.e.size; return r; }
+    // 3 + 4 built-in catalogue, then the community list
+    var c = catalogue(b);
+    if (c) { direct(c.e.url, c.e.page, c.conf === 'found' ? 'Matched by file name in the ' + c.e.src + '.' : 'The ' + c.e.src + ' has a file with almost the same name (' + c.e.key + '). Check it is the one you need.');
+      r.conf = c.conf; r.src = c.e.src; r.dir = c.e.dir; r.size = c.e.size; r.base = c.e.base; return r; }
+    // 5 searches. Hugging Face and Civitai index model names, not file names, so use the first meaningful words
     var stem = b.replace(MODEL_EXT, ''), short = looseQuery(stem), q = encodeURIComponent(short);
     links.push({ label: 'Search Hugging Face', href: 'https://huggingface.co/models?search=' + q });
     if (cat === 'loras' || cat === 'checkpoints' || cat === 'embeddings' || cat === 'controlnet' || cat === 'upscale_models' || cat === 'other' || cat === 'diffusion_models')
       links.push({ label: 'Search Civitai', href: 'https://civitai.red/search/models?query=' + q });
     links.push({ label: 'Search the web', href: 'https://www.google.com/search?q=' + encodeURIComponent('"' + stem + '"') });
-    return { links: links, exact: false, query: short };
+    r.query = short; return r;
   }
 
   // ---------- custom node detective ----------
@@ -461,6 +520,16 @@
       pk.guessed = true; pk.alt = Math.max(pk.alt, c.length - 1); if (fuzzy) pk.fuzzy = (pk.fuzzy || []).concat([t + ' \u2248 ' + fuzzy]);
       list.forEach(function (x) { pk.types.set(t, (pk.types.get(t) || 0) + 1); if (RANK[x.need] > RANK[pk.need]) pk.need = x.need; x.pack = pk; });
     });
+    // the author's own repo links (from notes) fill in packs the catalogue cannot place, or offer a second opinion
+    var notes = noteLinks(L);
+    var repoLinks = notes.filter(function (l) { return /^https:\/\/github\.com\/[^/]+\/[^/]+\/?$/i.test(l.url); });
+    function tset(x) { return toks(String(x).split('/').pop()).sort().join(' '); }
+    packs.forEach(function (pk) {
+      var want = [tset(pk.key), tset(pk.title)];
+      var hit = repoLinks.filter(function (l) { return want.indexOf(tset(l.url.replace(/\/$/, ''))) >= 0; })[0];
+      if (!hit) return; var u = hit.url.replace(/\/$/, '');
+      if (!pk.url) { pk.url = u; pk.fromNote = true; } else if (pk.url.toLowerCase() !== u.toLowerCase()) pk.noteUrl = u;
+    });
     var packList = Array.from(packs.values()).sort(function (a, b) { return RANK[b.need] - RANK[a.need] || a.title.localeCompare(b.title); });
     var reqPacks = packList.filter(function (p) { return p.need === 'req' || p.need === 'cond'; });
     if (reqPacks.length) issue('warning', 'Needs ' + reqPacks.length + ' custom node pack' + (reqPacks.length > 1 ? 's' : ''), reqPacks.map(function (p) { return p.title; }).join(', ') + '. Install ' + (reqPacks.length > 1 ? 'them' : 'it') + ' with ComfyUI-Manager before running; without ' + (reqPacks.length > 1 ? 'them' : 'it') + ' the nodes show up red as missing.');
@@ -509,8 +578,9 @@
     var modelList = Array.from(models.values()).map(function (m) {
       if (m.need == null) m.need = m.outerNeed;
       if (!m.cat) m.cat = guessCategory('', m.base);
-      var lk = modelLinks(m.name, known, m.cat);
-      m.links = lk.links; m.exact = lk.exact; m.query = lk.query; m.linkSrc = lk.src || null;
+      var lk = modelLinks(m.name, known, m.cat, notes);
+      if (!m.sure && lk.dir) { var d0 = lk.dir.split('/')[0]; m.cat = d0 === 'unet' ? 'diffusion_models' : d0 === 'clip' ? 'text_encoders' : d0; }
+      m.links = lk.links; m.exact = lk.exact; m.query = lk.query; m.linkSrc = lk.src || null; m.conf = lk.conf; m.how = lk.how || ''; m.size = lk.size || ''; if (!m.size) { var sz = /(^|[^a-z0-9.])(\d+(?:\.\d+)?)\s?gb(?![a-z])/i.exec(m.base); if (sz) { m.size = sz[2] + ' GB'; m.sizeFrom = 'file name'; } } m.baseModel = lk.base || ''; m.format = fileFormat(m.base);
       m.catLabel = CAT_LABEL[m.cat] || m.cat.replace(/_/g, ' ');
       m.folder = 'models/' + (lk.dir || m.cat);
       m.modifier = m.cat === 'loras';

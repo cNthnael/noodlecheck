@@ -31,6 +31,7 @@ lists every model and custom node it needs, and gives a verdict before you ever 
 - [Features](#-features)
 - [Verdicts](#-verdicts)
 - [Custom node detective](#-custom-node-detective)
+- [Model finder](#-model-finder)
 - [How it works](#-how-it-works)
 - [Supported files](#-supported-files)
 - [Do and don't](#-do-and-dont)
@@ -117,6 +118,24 @@ Anything still unidentified gets one-click GitHub code and repository searches.
 
 ---
 
+## 🧭 Model finder
+
+For every model file a workflow needs, NoodleCheck walks down this list and stops at the first hit. All of it happens in your browser tab: no API calls, no login, nothing sent anywhere.
+
+| Step | Where it looks | Badge |
+|:---:|---|---|
+| 1 | Download links ComfyUI saved inside the workflow | **Found** |
+| 2 | Links the workflow author wrote in Note nodes, matched by file name | **Found** or **Likely** |
+| 3 | The built-in catalogue (official templates, ComfyUI-Manager model list, weekly crawl in `models-extra.js`) | **Found** or **Likely** |
+| 4 | The hand-maintained community list in `community-models.js` | **Found** or **Likely** |
+| 5 | Search links on Hugging Face, Civitai and the web, using the first words of the file name | **Not identified** |
+
+Each row also shows the file format and quantisation read from the name, and the file size when a source records it. **Likely** means the name is close but not identical, so check before downloading.
+
+The weekly crawl is done by a GitHub Action in this repo (`tools/crawl_models.py`), never by a visitor's browser. To add a model the crawl misses, add one line to `community-models.js` and open a pull request.
+
+---
+
 ## ⚙️ How it works
 
 ```mermaid
@@ -186,8 +205,12 @@ noodlecheck/
 ├── index.html     # Page layout, styles, canvas renderer and side panel
 ├── engine.js      # Reads the workflow and runs every check
 ├── data.js        # Snapshot: core node definitions, node pack map, model links
+├── models-extra.js      # Extra model catalogue, rewritten weekly by the GitHub Action
+├── community-models.js  # Hand-maintained model links (pull requests welcome)
 ├── samples.js     # The three built-in example workflows
 ├── favicon.svg    # Browser tab icon
+├── tools/crawl_models.py              # Builds models-extra.js
+├── .github/workflows/update-models.yml  # Runs the crawl every Monday
 ├── docs/          # Screenshots used in this README
 └── README.md
 ```
