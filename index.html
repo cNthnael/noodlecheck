@@ -171,7 +171,7 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
 <script src="samples.js"></script>
 <script src="engine.js"></script>
 <script>
-// app.js v1.4 - 2026-11-12 08:25 WIB (v1.4: safeLink rewrites civitai.com to civitai.red) (v1.3 2026-11-11 10:55: pinned versions footer) (v1.2: enter-subgraph button on nodes, Esc to go back, view restored on return) : canvas renderer (ComfyUI default dark palette) + side panel
+// app.js v1.5 - 2026-11-12 08:45 WIB (v1.5: hint shows the shortened search words) (v1.4: safeLink rewrites civitai.com to civitai.red) (v1.3 2026-11-11 10:55: pinned versions footer) (v1.2: enter-subgraph button on nodes, Esc to go back, view restored on return) : canvas renderer (ComfyUI default dark palette) + side panel
 (function () {
 'use strict';
 var C = window.ComfyCheck, D = C.data;
@@ -558,7 +558,7 @@ function panel() {
     var lk = el('div', { class: 'links' }); m.links.forEach(function (l) { var a = safeLink(l.href, l.label); if (a) lk.appendChild(a); });
     if (m.users[0]) lk.appendChild(locate(m.users[0].graphId, m.users[0].nodeKey, 'Show loader'));
     li.appendChild(lk);
-    if (!m.exact) li.appendChild(el('p', { class: 'm', text: 'No source is recorded in the workflow or the catalogue, so these are searches by file name.' }));
+    if (!m.exact) li.appendChild(el('p', { class: 'm', text: 'No source is recorded in the workflow or the catalogue, so these are searches by the first words of the file name' + (m.query ? ' (\u201c' + m.query + '\u201d).' : '.') }));
     um.appendChild(li); }); sm.appendChild(um); }
   p.appendChild(sm);
   // custom nodes

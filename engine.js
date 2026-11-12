@@ -1,4 +1,4 @@
-// engine.js v1.5 - 2026-11-12 08:25 WIB (v1.5: Civitai search link uses civitai.red) (v1.4: MiniMax H3 family) (v1.3: matches packs by the Manager nodename_pattern, e.g. rgthree) (v1.2: loop check follows cables through subgraphs port by port) (v1.1: fuzzy + prefix custom node detective, live catalogue update)
+// engine.js v1.6 - 2026-11-12 08:45 WIB (v1.6: model searches use the first words of the file name + web search link) (v1.5: Civitai search link uses civitai.red) (v1.4: MiniMax H3 family) (v1.3: matches packs by the Manager nodename_pattern, e.g. rgthree) (v1.2: loop check follows cables through subgraphs port by port) (v1.1: fuzzy + prefix custom node detective, live catalogue update)
 // Workflow parsing + static analysis for the ComfyUI Workflow Checker. No DOM access in this file.
 (function (root) {
   'use strict';
@@ -191,6 +191,12 @@
   }
   function base(n) { return String(n).split(/[\\/]/).pop(); }
   function hfRepo(url) { var m = /^https?:\/\/huggingface\.co\/([^/]+\/[^/]+)\/(?:resolve|blob)\//.exec(url || ''); return m ? 'https://huggingface.co/' + m[1] : null; }
+  var NOISE = /^(v\d+[a-z0-9]*|\d+(\.\d+)?(gb|b|k)|fp(8|16|32)|bf16|int[48]|nf4|q\d.*|e4m3fn|e5m2|scaled|pruned?|prune|convrot|w\d+a\d+|g\d+|safetensors|final|ema|emaonly|half|full|merged?|fixed)$/i;
+  function looseQuery(stem) {
+    var words = stem.replace(/(\d)\.(\d)/g, '$1$2').replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean), out = [];
+    for (var i = 0; i < words.length && out.length < 3; i++) { if (NOISE.test(words[i])) { if (out.length) break; else continue; } out.push(words[i].toLowerCase()); }
+    return out.length ? out.join(' ') : stem;
+  }
   function modelLinks(name, known, cat) {
     var b = base(name), k = known[b] || known[name] || (D.models[b] ? { url: D.models[b][0], dir: D.models[b][1], src: 'catalogue' } : null), links = [];
     if (k && k.url) {
@@ -199,11 +205,14 @@
       links.push({ label: 'Download file', href: k.url });
       return { links: links, exact: true, src: k.src || 'workflow', dir: k.dir };
     }
-    var q = encodeURIComponent(b.replace(MODEL_EXT, ''));
+    // Hugging Face and Civitai index model names, not file names, so the full file name finds nothing:
+    // search with the first few meaningful words instead (dasiwa_minimax_h3_ref2va_v4_pruned_turbo_int8 -> "dasiwa minimax h3")
+    var stem = b.replace(MODEL_EXT, ''), short = looseQuery(stem), q = encodeURIComponent(short);
     links.push({ label: 'Search Hugging Face', href: 'https://huggingface.co/models?search=' + q });
-    if (cat === 'loras' || cat === 'checkpoints' || cat === 'embeddings' || cat === 'controlnet' || cat === 'upscale_models' || cat === 'other')
+    if (cat === 'loras' || cat === 'checkpoints' || cat === 'embeddings' || cat === 'controlnet' || cat === 'upscale_models' || cat === 'other' || cat === 'diffusion_models')
       links.push({ label: 'Search Civitai', href: 'https://civitai.red/search/models?query=' + q });
-    return { links: links, exact: false };
+    links.push({ label: 'Search the web', href: 'https://www.google.com/search?q=' + encodeURIComponent('"' + stem + '"') });
+    return { links: links, exact: false, query: short };
   }
 
   // ---------- custom node detective ----------
@@ -501,7 +510,7 @@
       if (m.need == null) m.need = m.outerNeed;
       if (!m.cat) m.cat = guessCategory('', m.base);
       var lk = modelLinks(m.name, known, m.cat);
-      m.links = lk.links; m.exact = lk.exact; m.linkSrc = lk.src || null;
+      m.links = lk.links; m.exact = lk.exact; m.query = lk.query; m.linkSrc = lk.src || null;
       m.catLabel = CAT_LABEL[m.cat] || m.cat.replace(/_/g, ' ');
       m.folder = 'models/' + (lk.dir || m.cat);
       m.modifier = m.cat === 'loras';
