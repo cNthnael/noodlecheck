@@ -171,7 +171,7 @@ dialog .row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
 <script src="samples.js"></script>
 <script src="engine.js"></script>
 <script>
-// app.js v1.3 - 2026-11-11 10:55 WIB (v1.2: enter-subgraph button on nodes, Esc to go back, view restored on return) : canvas renderer (ComfyUI default dark palette) + side panel
+// app.js v1.4 - 2026-11-12 08:25 WIB (v1.4: safeLink rewrites civitai.com to civitai.red) (v1.3 2026-11-11 10:55: pinned versions footer) (v1.2: enter-subgraph button on nodes, Esc to go back, view restored on return) : canvas renderer (ComfyUI default dark palette) + side panel
 (function () {
 'use strict';
 var C = window.ComfyCheck, D = C.data;
@@ -192,7 +192,7 @@ function el(tag, attrs) {
   for (i = 2; i < arguments.length; i++) { var c = arguments[i]; if (c == null) continue; e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); }
   return e;
 }
-function safeLink(href, label) { if (!/^https:\/\//i.test(String(href))) return null; return el('a', { href: href, target: '_blank', rel: 'noopener noreferrer', text: label }); }
+function safeLink(href, label) { if (!/^https:\/\//i.test(String(href))) return null; href = String(href).replace(/^https:\/\/(www\.)?civitai\.com/i, 'https://civitai.red'); return el('a', { href: href, target: '_blank', rel: 'noopener noreferrer', text: label }); }
 function typeColor(t) { return PAL[t] || LG.LINK; }
 
 // ---------- layout ----------

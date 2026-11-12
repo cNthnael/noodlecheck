@@ -1,4 +1,4 @@
-// engine.js v1.4 - 2026-11-12 08:20 WIB (v1.4: MiniMax H3 family) (v1.3: matches packs by the Manager nodename_pattern, e.g. rgthree) (v1.2: loop check follows cables through subgraphs port by port) (v1.1: fuzzy + prefix custom node detective, live catalogue update)
+// engine.js v1.5 - 2026-11-12 08:25 WIB (v1.5: Civitai search link uses civitai.red) (v1.4: MiniMax H3 family) (v1.3: matches packs by the Manager nodename_pattern, e.g. rgthree) (v1.2: loop check follows cables through subgraphs port by port) (v1.1: fuzzy + prefix custom node detective, live catalogue update)
 // Workflow parsing + static analysis for the ComfyUI Workflow Checker. No DOM access in this file.
 (function (root) {
   'use strict';
@@ -202,7 +202,7 @@
     var q = encodeURIComponent(b.replace(MODEL_EXT, ''));
     links.push({ label: 'Search Hugging Face', href: 'https://huggingface.co/models?search=' + q });
     if (cat === 'loras' || cat === 'checkpoints' || cat === 'embeddings' || cat === 'controlnet' || cat === 'upscale_models' || cat === 'other')
-      links.push({ label: 'Search Civitai', href: 'https://civitai.com/search/models?query=' + q });
+      links.push({ label: 'Search Civitai', href: 'https://civitai.red/search/models?query=' + q });
     return { links: links, exact: false };
   }
 
